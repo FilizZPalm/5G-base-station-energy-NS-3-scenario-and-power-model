@@ -8,7 +8,7 @@ JOBS=${JOBS:-6}
 SEEDS=${SEEDS:-10}
 DURATION=${DURATION:-10}
 VIDEO=${VIDEO:-segments}
-PROFILES=${PROFILES:-peak150 day night}
+PROFILES=${PROFILES:-peak100 day night}
 CHAINS=${CHAINS:-64 32 16}
 TOTAL=$((SEEDS * $(echo $PROFILES | wc -w) * $(echo $CHAINS | wc -w)))
 docker start ns3-5g >/dev/null

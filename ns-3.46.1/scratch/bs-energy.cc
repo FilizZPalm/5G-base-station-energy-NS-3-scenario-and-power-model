@@ -291,7 +291,7 @@ main(int argc, char* argv[])
     }
     else if (profile == "peak")
     {
-        loadMbps = loadMbps < 0 ? 27 : loadMbps;
+        loadMbps = loadMbps < 0 ? 47 : loadMbps; // plus 53 of video: 100 in total
         activeUes = activeUes < 0 ? uesPerGnb : activeUes;
         video = {3, 10, 40};
     }

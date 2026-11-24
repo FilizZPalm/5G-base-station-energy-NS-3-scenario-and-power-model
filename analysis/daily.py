@@ -1,93 +1,80 @@
-"""NS-3 metrics -> AAU power over an assumed 24 h profile, with cumulative sleep policies.
-Seed 1 only, the one with a (nearly) complete grid. No QoS evaluation here."""
-from pathlib import Path
+"""Campaign results (night, day, peak levels) -> energy of one day, per sleep policy.
+
+Each hour of the day is one of the three simulated levels; hours per level are an assumption.
+Sleep modes with a formula only (all carriers off, deep dormancy) are marked: no wake-up, no 4G QoS."""
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import ns3data
+import campaign as c
 import power as pw
+from plots import ANCHOR_W_PER_MBPS, BLUE, GRID, INK, MUTED, ORANGE, OUT
 
-HERE = Path(__file__).resolve().parent
-(HERE / "figures").mkdir(exist_ok=True)
-W = pw.P_PEAK_W
-STEP_H = 0.25
+HERE = c.Path(__file__).parent
 # ASSUMPTIONS ---------------------------------------------------------------------------
-PROFILE = np.array([.12, .06, .03, .015, .012, .015, .04, .12, .25, .38, .46, .52,   # 0-11 h
-                    .55, .55, .52, .50, .52, .58, .68, .80, .95, 1., .75, .35])      # 12-23 h
-PEAK_MBPS = 80.0
-THR_32, THR_16 = 0.30, 0.15     # PRB load, measured in the previous step
-THR_CARRIER = 5.0               # Mbit/s: all carriers off, traffic on the 4G layer
-THR_DORMANT, DORMANT_STEPS = 2.0, 4
-ANCHOR_W_PER_MBPS = 1.0         # extra 4G power (Uitto: 160 W idle -> 170 W at 10 Mbit/s)
+HOURS = {"night": 8, "day": 12, "peak100": 4}
+SENSITIVITY = {"6/14/4": (6, 14, 4), "8/12/4 (base)": (8, 12, 4), "10/10/4": (10, 10, 4),
+               "8/14/2": (8, 14, 2), "8/10/6": (8, 10, 6)}
+# policy -> (chains, symbol shutdown) per level; the last two replace the night with a formula-only state
+POLICIES = {
+    "always on": {"night": (64, 0), "day": (64, 0), "peak100": (64, 0)},
+    "symbol": {"night": (64, 1), "day": (64, 1), "peak100": (64, 1)},
+    "symbol + channel": {"night": (16, 1), "day": (16, 1), "peak100": (64, 1)},
+}
+NIGHT_STATES = {"+ night carriers off*": pw.CARRIER_OFF, "+ night dormancy*": pw.DORMANT}
 # ---------------------------------------------------------------------------------------
 
-t = ns3data.table()
-t = t[(t.run == 1) & (t.offered <= 100)]
-g = {a: d.sort_values("sent") for a, d in t.groupby("ant")}
+w = c.runs.set_index(["profile", "chains", "seed"])
+seeds = range(1, c.SEEDS + 1)
 
 
-def radio(a, col, x):
-    return np.interp(x, g[a].sent, g[a][col])
+def level_power(policy, level):
+    """AAU power of a level, one value per seed [W]."""
+    if level == "night" and policy in NIGHT_STATES:
+        sent = np.array([w.loc[("night", 64, s), "sent"] for s in seeds])
+        return NIGHT_STATES[policy] * c.W + ANCHOR_W_PER_MBPS * sent
+    a, sym = POLICIES.get(policy, POLICIES["symbol + channel"])[level]
+    return np.array([w.loc[(level, a, s), "watt_sym" if sym else "watt"] for s in seeds])
 
 
-h = np.arange(0, 24, STEP_H)
-mbps = np.interp(h, np.arange(25), np.append(PROFILE, PROFILE[0])) * PEAK_MBPS
-prev = np.roll(mbps, 1)                          # reactive: last measured step (periodic day)
+def energy(policy, hours):
+    """Energy of the day, one value per seed [kWh]."""
+    return sum(h * level_power(policy, l) for l, h in hours.items()) / 1000
 
 
-def states(opts):
-    s = np.full(len(h), "64", dtype=object)
-    if "channel" in opts:
-        l = radio(64, "prb_load", prev)
-        s[l < THR_32] = "32"
-        s[l < THR_16] = "16"
-    if "carrier" in opts:
-        s[prev < THR_CARRIER] = "off"
-    if "dormancy" in opts:
-        low = prev < THR_DORMANT
-        for i in range(len(h)):
-            if all(low[(i - k) % len(h)] for k in range(DORMANT_STEPS)):
-                s[i] = "dormant"
-    return s
+def half_ci(v):
+    return np.std(v, ddof=1) * c.T975 / np.sqrt(len(v))
 
 
-def power(opts):
-    s, p = states(opts), np.zeros(len(h))
-    for i, (st, x) in enumerate(zip(s, mbps)):
-        if st in ("off", "dormant"):
-            p[i] = (pw.CARRIER_OFF if st == "off" else pw.DORMANT) * W + ANCHOR_W_PER_MBPS * x
-        else:
-            a = int(st)
-            off = radio(a, "pa_off", x) if "symbol" in opts else 0
-            p[i] = float(pw.piovesan(radio(a, "prb_load", x), a, off)) * W
-    return s, p
+names = list(POLICIES) + list(NIGHT_STATES)
+if __name__ == "__main__":
+    ref = energy("always on", HOURS)
+    rows = []
+    for n in names:
+        e = energy(n, HOURS)
+        s = 100 * (1 - e / ref)  # paired by seed
+        rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=s.mean(), saving_ci=half_ci(s),
+                         **{f"W_{l}": level_power(n, l).mean() for l in HOURS}))
+    r = pd.DataFrame(rows).set_index("policy")
+    r.to_csv(HERE / "daily.csv")
+    pd.set_option("display.width", 200, "display.max_columns", 20)
+    print(r.round(2).to_string())
+    t = {k: {n: 100 * (1 - energy(n, dict(zip(HOURS, v))).mean() / energy("always on", dict(zip(HOURS, v))).mean())
+             for n in names[1:]} for k, v in SENSITIVITY.items()}
+    print("\nsaving % by hours night/day/peak\n", pd.DataFrame(t).T.round(1).to_string(), sep="")
 
-
-POL = {"always on": (), "symbol": ("symbol",), "+ channel": ("symbol", "channel"),
-       "+ carrier (all off)": ("symbol", "channel", "carrier"),
-       "+ dormancy": ("symbol", "channel", "carrier", "dormancy")}
-out, series = [], {}
-for n, o in POL.items():
-    s, p = power(o)
-    series[n] = p
-    out.append(dict(policy=n, mean_W=p.mean(), kWh_day=p.sum() * STEP_H / 1000,
-                    **{k: (s == k).mean() * 24 for k in ("64", "32", "16", "off", "dormant")}))
-r = pd.DataFrame(out).set_index("policy")
-r.insert(2, "saving_%", 100 * (1 - r.kWh_day / r.kWh_day.iloc[0]))
-r.to_csv(HERE / "daily.csv")
-print(r.round(2).to_string())
-print("columns 64..dormant: hours per day. One of two carriers off, zero load: "
-      f"{float(pw.piovesan(0)) * W:.0f} W, unchanged (shared MCPA, T=1)")
-
-C = ["#52514e", "#2a78d6", "#1baf7a", "#eda100", "#4a3aa7"]
-fig, ax = plt.subplots(2, 1, figsize=(8, 6), sharex=True, height_ratios=[1, 2.2])
-ax[0].plot(h, mbps, c="#52514e"); ax[0].set_ylabel("traffic [Mbit/s]")
-for (n, p), c in zip(series.items(), C):
-    ax[1].step(h, p, where="post", c=c, lw=1.8, label=n)
-ax[1].set(ylabel="AAU power [W]\n(incl. extra 4G power)", xlabel="hour", ylim=(0, None), xticks=range(0, 25, 3))
-ax[1].legend(frameon=False, ncols=2)
-for a in ax:
-    a.grid(alpha=.25); a.spines[["top", "right"]].set_visible(False)
-plt.tight_layout(); plt.savefig(HERE / "figures" / "daily_power.png", dpi=150)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    cols = [ORANGE if n in NIGHT_STATES else BLUE for n in names]
+    ax.barh(names[::-1], r.kWh_day[::-1], .6, color=cols[::-1], xerr=r.kWh_ci[::-1],
+            error_kw=dict(ecolor=INK, lw=1, capsize=2))
+    for n in names:
+        ax.text(r.kWh_day[n] + r.kWh_ci[n] + .2, n, f"{r.kWh_day[n]:.1f} kWh"
+                + (f"  (−{r.saving_pct[n]:.0f}%)" if n != "always on" else ""), va="center", fontsize=9, color=INK)
+    ax.set(xlabel="AAU energy per day [kWh]", xlim=(0, 22),
+           title=f"Energy of one day ({'/'.join(map(str, HOURS.values()))} h night/day/peak, assumed)")
+    ax.grid(axis="y", visible=False)
+    fig.tight_layout(rect=(0, .06, 1, 1))
+    fig.text(.01, .01, "* night from the power formula only (no wake-up, no 4G QoS). 10 seeds; bars: 95% CI",
+             fontsize=8, color=MUTED)
+    fig.savefig(OUT / "daily_power.png", dpi=200, facecolor="white")
