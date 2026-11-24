@@ -2,7 +2,8 @@
 //
 // One AAU per site with two contiguous n78 carriers; UEs are statically split between
 // the carriers through their QCI. Traffic profiles over UDP: night (few UEs, rare Poisson bursts),
-// day (all UEs, Poisson bursts), peak (CBR video UEs, Poisson bursts on the others). The program
+// day (all UEs, Poisson bursts), peak (video UEs, Poisson bursts on the others). Video is sent as
+// DASH-like segments (paced on-off) or as CBR. The program
 // exports raw per-slot occupancy of every carrier of cell 0 (the AAU under study) and
 // per-flow QoS of its UEs. No power model here: energy is computed in analysis/.
 #include "ns3/antenna-module.h"
@@ -13,6 +14,7 @@
 #include "ns3/mobility-module.h"
 #include "ns3/network-module.h"
 #include "ns3/nr-module.h"
+#include "ns3/spectrum-module.h"
 
 #include <fstream>
 
@@ -109,6 +111,109 @@ class CbrSource : public SimpleRefCount<CbrSource>
     Time m_stop;
 };
 
+/// Segmented (DASH-like) video: every period one segment is sent as packets paced at the
+/// server rate, then the source is silent. It starts in steady state with a given phase.
+class SegmentSource : public SimpleRefCount<SegmentSource>
+{
+  public:
+    static constexpr uint32_t PKT = 1400;
+
+    struct Segment
+    {
+        Time start;
+        uint32_t sent{0};
+        uint32_t rx{0};
+        Time lastRx;
+    };
+
+    SegmentSource(Ptr<Socket> s, double rateBps, double periodS, double paceBps, Time stop)
+        : m_socket(s),
+          m_n(std::ceil(rateBps * periodS / 8 / PKT)),
+          m_period(Seconds(periodS)),
+          m_gap(Seconds(PKT * 8 / paceBps)),
+          m_stop(stop)
+    {
+        NS_ABORT_MSG_IF(m_gap * m_n > m_period, "videoPaceMbps is below the video rate");
+    }
+
+    /// First segment starts phase - period after now: only its remaining packets are sent.
+    void Start(Time phase)
+    {
+        BeginSegment(Simulator::Now() + phase - m_period);
+    }
+
+    void Received(Ptr<const Packet> p, const Address&)
+    {
+        SeqTsHeader h;
+        p->PeekHeader(h);
+        auto& seg = m_segments[h.GetSeq() / m_n];
+        seg.rx++;
+        seg.lastRx = Simulator::Now();
+    }
+
+    uint32_t PacketsPerSegment() const
+    {
+        return m_n;
+    }
+
+    const std::vector<Segment>& Segments() const
+    {
+        return m_segments;
+    }
+
+  private:
+    void BeginSegment(Time start)
+    {
+        m_segments.emplace_back();
+        m_segments.back().start = start;
+        // Packets that would have been sent before now are skipped (first segment only).
+        uint32_t first = 0;
+        while (first < m_n && start + m_gap * first < Simulator::Now())
+        {
+            first++;
+        }
+        if (first < m_n)
+        {
+            Simulator::Schedule(start + m_gap * first - Simulator::Now(),
+                                &SegmentSource::Send,
+                                this,
+                                first);
+        }
+        if (start + m_period < m_stop)
+        {
+            Simulator::Schedule(start + m_period - Simulator::Now(),
+                                &SegmentSource::BeginSegment,
+                                this,
+                                start + m_period);
+        }
+    }
+
+    void Send(uint32_t i)
+    {
+        if (Simulator::Now() >= m_stop)
+        {
+            return;
+        }
+        SeqTsHeader h;
+        h.SetSeq((m_segments.size() - 1) * m_n + i);
+        auto p = Create<Packet>(PKT - h.GetSerializedSize());
+        p->AddHeader(h);
+        m_socket->Send(p);
+        m_segments.back().sent++;
+        if (i + 1 < m_n)
+        {
+            Simulator::Schedule(m_gap, &SegmentSource::Send, this, i + 1);
+        }
+    }
+
+    Ptr<Socket> m_socket;
+    uint32_t m_n;
+    Time m_period;
+    Time m_gap;
+    Time m_stop;
+    std::vector<Segment> m_segments;
+};
+
 int
 main(int argc, char* argv[])
 {
@@ -124,6 +229,12 @@ main(int argc, char* argv[])
     double peakTxW = 104.9;  // AAU radiated power with 64 chains, both carriers at full load
     double bwPerCarrier = 30e6;
     uint32_t burstBytes = 25000;
+    std::string videoModel = "segments";
+    double segmentS = 2.0;        // ASSUMPTION: segment length
+    double videoPaceMbps = 100.0; // ASSUMPTION: server rate while a segment is sent
+    double drain = 0.05;
+    std::string association = "best";
+    bool sharedShadowing = true; // same LOS state and shadowing on both carriers
     double warmup = 0.3;
     double duration = 1.0;
     uint32_t run = 1;
@@ -142,6 +253,16 @@ main(int argc, char* argv[])
     cmd.AddValue("peakTxW", "Total AAU TX power at 64 chains [W]", peakTxW);
     cmd.AddValue("bwPerCarrier", "Bandwidth per carrier [Hz]", bwPerCarrier);
     cmd.AddValue("burstBytes", "Burst size [byte]", burstBytes);
+    cmd.AddValue("video", "Video model: segments or cbr", videoModel);
+    cmd.AddValue("segmentS", "Video segment length [s]", segmentS);
+    cmd.AddValue("videoPaceMbps", "Server rate while sending a segment [Mbit/s]", videoPaceMbps);
+    cmd.AddValue("association",
+                 "best: UEs are redrawn until their own site is the strongest; geometric: no check",
+                 association);
+    cmd.AddValue("sharedShadowing",
+                 "Both carriers share LOS state and shadowing",
+                 sharedShadowing);
+    cmd.AddValue("drain", "Extra time after the last transmission [s]", drain);
     cmd.AddValue("warmup", "Discarded initial time [s]", warmup);
     cmd.AddValue("duration", "Measured time [s]", duration);
     cmd.AddValue("run", "RNG run", run);
@@ -152,6 +273,10 @@ main(int argc, char* argv[])
     {
         NS_ABORT_MSG_IF(a != 64 && a != 32 && a != 16, "antennas: 64, 32 or 16");
     }
+    NS_ABORT_MSG_IF(videoModel != "segments" && videoModel != "cbr", "video: segments or cbr");
+    NS_ABORT_MSG_IF(association != "best" && association != "geometric",
+                    "association: best or geometric");
+    const bool best = association == "best";
     // Video rates [Mbit/s] of the first UEs of each site (720p, 1080p, 4K in Uitto et al.).
     std::vector<double> video;
     if (profile == "night")
@@ -182,23 +307,30 @@ main(int argc, char* argv[])
     Config::SetDefault("ns3::NrRlcUm::MaxTxBufferSize", UintegerValue(20000000));
 
     NodeContainer gnbs(nGnb);
-    NodeContainer ues(nGnb * uesPerGnb);
+    NodeContainer ues;
+    if (!best)
+    {
+        ues.Create(nGnb * uesPerGnb);
+    }
     const double isd = 2 * radius;
     auto gnbPos = CreateObject<ListPositionAllocator>();
     auto uePos = CreateObject<ListPositionAllocator>();
     auto rnd = CreateObject<UniformRandomVariable>();
     rnd->SetStream(1);
+    auto drop = [&](const Vector& c) {
+        double r = sqrt(rnd->GetValue(35.0 * 35.0, radius * radius));
+        double t = rnd->GetValue(0, 2 * M_PI);
+        return Vector(c.x + r * cos(t), c.y + r * sin(t), 1.5);
+    };
     for (uint32_t g = 0; g < nGnb; ++g)
     {
         // Site 0 at the origin, the others on a ring around it.
         double a = 2 * M_PI * g / 6.0;
         Vector c = g == 0 ? Vector(0, 0, 25) : Vector(isd * cos(a), isd * sin(a), 25);
         gnbPos->Add(c);
-        for (uint32_t u = 0; u < uesPerGnb; ++u)
+        for (uint32_t u = 0; !best && u < uesPerGnb; ++u)
         {
-            double r = sqrt(rnd->GetValue(35.0 * 35.0, radius * radius));
-            double t = rnd->GetValue(0, 2 * M_PI);
-            uePos->Add(Vector(c.x + r * cos(t), c.y + r * sin(t), 1.5));
+            uePos->Add(drop(c));
         }
     }
     MobilityHelper mob;
@@ -225,6 +357,48 @@ main(int argc, char* argv[])
     ch->SetPathlossAttribute("ShadowingEnabled", BooleanValue(true));
     ch->AssignChannelsToBands({band});
     auto bwps = CcBwpCreator::GetAllBwps({band});
+    if (sharedShadowing)
+    {
+        // The helper draws LOS and shadowing per carrier, but the carriers are contiguous: give
+        // carrier 1 the pathloss and LOS models of carrier 0 (its 30 MHz offset is negligible).
+        // Fast fading stays independent.
+        auto loss = DynamicCast<ThreeGppPropagationLossModel>(
+            bwps.at(0).get()->GetChannel()->GetPropagationLossModel());
+        auto channel = ch->CreateChannel(NrChannelHelper::INIT_FADING);
+        auto matrix = channel->GetPhasedArraySpectrumPropagationLossModel()
+                          ->GetObject<MatrixBasedChannelModel>();
+        matrix->SetAttribute("ChannelConditionModel", PointerValue(loss->GetChannelConditionModel()));
+        matrix->SetAttribute("Frequency", DoubleValue(bwps.at(1).get()->m_centralFrequency));
+        channel->AddPropagationLossModel(loss);
+        bwps.at(1).get()->SetChannel(channel);
+    }
+
+    // Best-cell drop: the same pathloss objects (LOS state and shadowing are cached per node
+    // pair) rank the sites here and are used in the run. Each UE is checked on the carrier that
+    // serves it, because the models draw independent shadowing per carrier. Sites differ only in
+    // pathloss and shadowing, so the choice does not depend on the active chains.
+    uint32_t rejected = 0;
+    for (uint32_t i = 0; best && i < nGnb * uesPerGnb; ++i)
+    {
+        const uint32_t own = i / uesPerGnb;
+        auto loss = bwps.at(i % 2).get()->GetChannel()->GetPropagationLossModel();
+        for (bool ok = false; !ok;)
+        {
+            auto n = CreateObject<Node>();
+            auto m = CreateObject<ConstantPositionMobilityModel>();
+            m->SetPosition(drop(gnbs.Get(own)->GetObject<MobilityModel>()->GetPosition()));
+            n->AggregateObject(m);
+            std::vector<double> rx;
+            for (uint32_t g = 0; g < nGnb; ++g)
+            {
+                rx.push_back(loss->CalcRxPower(0, gnbs.Get(g)->GetObject<MobilityModel>(), m));
+            }
+            ok = std::max_element(rx.begin(), rx.end()) - rx.begin() == own;
+            ok ? ues.Add(n) : void(rejected++);
+            NS_ABORT_MSG_IF(rejected > 1000, "too many rejected UE positions");
+        }
+    }
+    std::cout << "rejected_positions " << rejected << std::endl;
 
     auto setGnbArray = [&](uint32_t chains) {
         const uint32_t rows = chains == 64 ? 8 : 4;
@@ -296,6 +470,7 @@ main(int argc, char* argv[])
 
     std::vector<Ptr<BurstSource>> sources;
     std::vector<Ptr<CbrSource>> videos;
+    std::map<uint32_t, Ptr<SegmentSource>> segments; // by UE index
     for (uint32_t i = 0; i < ues.GetN(); ++i)
     {
         const uint16_t port = 1234 + i % 2;
@@ -310,7 +485,8 @@ main(int argc, char* argv[])
                                        tft);
         PacketSinkHelper sink("ns3::UdpSocketFactory",
                               InetSocketAddress(Ipv4Address::GetAny(), port));
-        sink.Install(ues.Get(i)).Start(Seconds(0));
+        auto sinkApps = sink.Install(ues.Get(i));
+        sinkApps.Start(Seconds(0));
         const uint32_t k = i % uesPerGnb; // index inside the site
         if (k >= uint32_t(activeUes) || (k >= video.size() && loadMbps <= 0))
         {
@@ -318,7 +494,22 @@ main(int argc, char* argv[])
         }
         auto s = Socket::CreateSocket(remote, UdpSocketFactory::GetTypeId());
         s->Connect(InetSocketAddress(ifs.GetAddress(i), port));
-        if (k < video.size())
+        if (k < video.size() && videoModel == "segments")
+        {
+            auto src =
+                Create<SegmentSource>(s, video[k] * 1e6, segmentS, videoPaceMbps * 1e6, stop);
+            auto phase = CreateObject<UniformRandomVariable>();
+            phase->SetStream(6000 + i);
+            segments[i] = src;
+            sinkApps.Get(0)->TraceConnectWithoutContext(
+                "Rx",
+                MakeCallback(&SegmentSource::Received, PeekPointer(src)));
+            Simulator::Schedule(g_warmup,
+                                &SegmentSource::Start,
+                                src,
+                                Seconds(phase->GetValue(0, segmentS)));
+        }
+        else if (k < video.size())
         {
             auto src = Create<CbrSource>(s, video[k] * 1e6, stop);
             videos.push_back(src);
@@ -347,7 +538,7 @@ main(int argc, char* argv[])
     mon->SetAttribute("DelayBinWidth", DoubleValue(0.0005));
 
     // Short drain so packets generated near the end are not counted as lost.
-    Simulator::Stop(stop + MilliSeconds(50));
+    Simulator::Stop(stop + Seconds(drain));
     Simulator::Run();
 
     mon->CheckForLostPackets();
@@ -374,6 +565,25 @@ main(int argc, char* argv[])
             f << i << ',' << st.txBytes << ',' << st.rxBytes << ',' << st.txPackets << ','
               << st.rxPackets << ',' << st.delaySum.GetSeconds() << ',' << p95 << ','
               << (i < video.size() ? "video" : "burst") << '\n';
+        }
+    }
+    if (!segments.empty())
+    {
+        std::ofstream v(out + "_segments.csv");
+        v << "ue,segment,start_s,pkts,sent,rx,last_rx_s\n";
+        for (auto& [i, src] : segments)
+        {
+            if (i >= uesPerGnb) // only UEs of cell 0
+            {
+                continue;
+            }
+            uint32_t id = 0;
+            for (auto& seg : src->Segments())
+            {
+                v << i << ',' << id++ << ',' << seg.start.GetSeconds() << ','
+                  << src->PacketsPerSegment() << ',' << seg.sent << ',' << seg.rx << ','
+                  << seg.lastRx.GetSeconds() << '\n';
+            }
         }
     }
     Simulator::Destroy();
