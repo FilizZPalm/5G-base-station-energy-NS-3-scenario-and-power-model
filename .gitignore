@@ -16,6 +16,6 @@
 __pycache__/
 .DS_Store
 
-# Outdated burst-only results
-/analysis/daily.csv
+# Generated results
+/analysis/*.csv
 /analysis/figures/daily_power.png
