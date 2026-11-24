@@ -1,4 +1,4 @@
-"""Traffic profile x sleep mode -> AAU power and delay, from the single-seed test runs.
+"""Traffic profile x sleep mode (SU-MIMO scenario) -> AAU power and delay, from the single-seed test runs.
 
 Cell 0 uses 64, 32 or 16 chains, the other sites always 64. Carrier shutdown and deep dormancy
 come from the power formula only: no NS-3 run, wake-up time or 4G QoS is considered."""
@@ -7,14 +7,14 @@ import pandas as pd
 import ns3data
 import power as pw
 
-RAW = ns3data.RAW.parent / "bs-results-test" / "nb64"
+RAW = ns3data.RAW.parent / "bs-results-test" / "sumimo"
 W = pw.P_PEAK_W
 ANCHOR_W_PER_MBPS = 1.0  # ASSUMPTION: extra 4G power (Uitto: 160 W idle -> 170 W at 10 Mbit/s)
 
 rows = []
-for prof in ("night", "day", "peak"):
+for prof in ("night", "day", "peak", "peak150"):
     for a in (64, 32, 16):
-        tag = prof if a == 64 else f"{prof}_a{a}"
+        tag = f"{prof}_a{a}"
         m = ns3data.summary(RAW / f"{tag}_slots.csv", RAW / f"{tag}_flows.csv")
         on = float(pw.piovesan(m["prb_load"], a)) * W
         sym = float(pw.piovesan(m["prb_load"], a, m["pa_off"])) * W

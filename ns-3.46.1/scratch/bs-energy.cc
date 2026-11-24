@@ -117,6 +117,7 @@ main(int argc, char* argv[])
     int activeUes = -1;      // UEs with traffic per site, <0: profile default
     uint32_t antennas = 64;  // active RF chains: 64, 32 or 16 (channel shutdown)
     uint32_t neighborAntennas = 64; // chains of the other sites
+    bool suMimo = true;             // 2 streams per UE over dual-polarized arrays, same element count
     uint32_t nGnb = 3;
     uint32_t uesPerGnb = 10;
     double radius = 250;     // m
@@ -134,6 +135,7 @@ main(int argc, char* argv[])
     cmd.AddValue("activeUes", "UEs with traffic per site", activeUes);
     cmd.AddValue("antennas", "Active RF chains of cell 0 (64, 32, 16)", antennas);
     cmd.AddValue("neighborAntennas", "Active RF chains of the other sites", neighborAntennas);
+    cmd.AddValue("suMimo", "Enable SU-MIMO (2 streams, dual polarization)", suMimo);
     cmd.AddValue("nGnb", "Number of sites", nGnb);
     cmd.AddValue("uesPerGnb", "UEs per site", uesPerGnb);
     cmd.AddValue("radius", "Cell radius [m]", radius);
@@ -226,15 +228,26 @@ main(int argc, char* argv[])
 
     auto setGnbArray = [&](uint32_t chains) {
         const uint32_t rows = chains == 64 ? 8 : 4;
-        nr->SetGnbAntennaAttribute("NumRows", UintegerValue(rows));
+        // Dual polarization doubles the elements per position: halve the rows.
+        nr->SetGnbAntennaAttribute("NumRows", UintegerValue(suMimo ? rows / 2 : rows));
         nr->SetGnbAntennaAttribute("NumColumns", UintegerValue(chains / rows));
     };
     nr->SetGnbAntennaAttribute("AntennaElement",
                                PointerValue(CreateObject<IsotropicAntennaModel>()));
     nr->SetUeAntennaAttribute("NumRows", UintegerValue(1));
-    nr->SetUeAntennaAttribute("NumColumns", UintegerValue(2));
+    nr->SetUeAntennaAttribute("NumColumns", UintegerValue(suMimo ? 1 : 2));
     nr->SetUeAntennaAttribute("AntennaElement",
                               PointerValue(CreateObject<IsotropicAntennaModel>()));
+    if (suMimo)
+    {
+        nr->SetGnbAntennaAttribute("IsDualPolarized", BooleanValue(true));
+        nr->SetUeAntennaAttribute("IsDualPolarized", BooleanValue(true));
+        NrHelper::MimoPmiParams pmi; // full search, two-port codebook
+        pmi.subbandSize = 8;
+        pmi.rankLimit = 2;
+        nr->SetupMimoPmi(pmi);
+        nr->SetAttribute("CsiFeedbackFlags", UintegerValue(1));
+    }
     nr->SetGnbBwpManagerAlgorithmAttribute("NGBR_LOW_LAT_EMBB", UintegerValue(0));
     nr->SetGnbBwpManagerAlgorithmAttribute("GBR_CONV_VOICE", UintegerValue(1));
     nr->SetUeBwpManagerAlgorithmAttribute("NGBR_LOW_LAT_EMBB", UintegerValue(0));
