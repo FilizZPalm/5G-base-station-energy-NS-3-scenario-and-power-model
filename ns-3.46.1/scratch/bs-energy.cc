@@ -116,6 +116,7 @@ main(int argc, char* argv[])
     double loadMbps = -1;    // offered DL burst load per cell, <0: profile default
     int activeUes = -1;      // UEs with traffic per site, <0: profile default
     uint32_t antennas = 64;  // active RF chains: 64, 32 or 16 (channel shutdown)
+    uint32_t neighborAntennas = 64; // chains of the other sites
     uint32_t nGnb = 3;
     uint32_t uesPerGnb = 10;
     double radius = 250;     // m
@@ -131,7 +132,8 @@ main(int argc, char* argv[])
     cmd.AddValue("profile", "night, day or peak", profile);
     cmd.AddValue("loadMbps", "Offered DL burst load per cell [Mbit/s]", loadMbps);
     cmd.AddValue("activeUes", "UEs with traffic per site", activeUes);
-    cmd.AddValue("antennas", "Active RF chains (64, 32, 16)", antennas);
+    cmd.AddValue("antennas", "Active RF chains of cell 0 (64, 32, 16)", antennas);
+    cmd.AddValue("neighborAntennas", "Active RF chains of the other sites", neighborAntennas);
     cmd.AddValue("nGnb", "Number of sites", nGnb);
     cmd.AddValue("uesPerGnb", "UEs per site", uesPerGnb);
     cmd.AddValue("radius", "Cell radius [m]", radius);
@@ -144,7 +146,10 @@ main(int argc, char* argv[])
     cmd.AddValue("out", "Output file prefix", out);
     cmd.Parse(argc, argv);
 
-    NS_ABORT_MSG_IF(antennas != 64 && antennas != 32 && antennas != 16, "antennas: 64, 32 or 16");
+    for (auto a : {antennas, neighborAntennas})
+    {
+        NS_ABORT_MSG_IF(a != 64 && a != 32 && a != 16, "antennas: 64, 32 or 16");
+    }
     // Video rates [Mbit/s] of the first UEs of each site (720p, 1080p, 4K in Uitto et al.).
     std::vector<double> video;
     if (profile == "night")
@@ -219,10 +224,11 @@ main(int argc, char* argv[])
     ch->AssignChannelsToBands({band});
     auto bwps = CcBwpCreator::GetAllBwps({band});
 
-    const uint32_t rows = antennas == 64 ? 8 : 4;
-    const uint32_t cols = antennas / rows;
-    nr->SetGnbAntennaAttribute("NumRows", UintegerValue(rows));
-    nr->SetGnbAntennaAttribute("NumColumns", UintegerValue(cols));
+    auto setGnbArray = [&](uint32_t chains) {
+        const uint32_t rows = chains == 64 ? 8 : 4;
+        nr->SetGnbAntennaAttribute("NumRows", UintegerValue(rows));
+        nr->SetGnbAntennaAttribute("NumColumns", UintegerValue(chains / rows));
+    };
     nr->SetGnbAntennaAttribute("AntennaElement",
                                PointerValue(CreateObject<IsotropicAntennaModel>()));
     nr->SetUeAntennaAttribute("NumRows", UintegerValue(1));
@@ -235,16 +241,23 @@ main(int argc, char* argv[])
     nr->SetUeBwpManagerAlgorithmAttribute("GBR_CONV_VOICE", UintegerValue(1));
     nr->SetSchedulerTypeId(TypeId::LookupByName("ns3::NrMacSchedulerOfdmaPF"));
 
-    auto gnbDev = nr->InstallGnbDevice(gnbs, bwps);
+    // Site by site: only cell 0 changes its number of chains.
+    NetDeviceContainer gnbDev;
+    for (uint32_t g = 0; g < nGnb; ++g)
+    {
+        setGnbArray(g == 0 ? antennas : neighborAntennas);
+        gnbDev.Add(nr->InstallGnbDevice(NodeContainer(gnbs.Get(g)), bwps));
+    }
     auto ueDev = nr->InstallUeDevice(ues, bwps);
     int64_t stream = 100;
     stream += nr->AssignStreams(gnbDev, stream);
     stream += nr->AssignStreams(ueDev, stream);
 
     // With fewer chains each PA keeps its own maximum, so the total scales with the chains.
-    const double perCarrierDbm = 10 * log10(peakTxW / 2 * antennas / 64.0 * 1000);
     for (uint32_t g = 0; g < nGnb; ++g)
     {
+        const uint32_t chains = g == 0 ? antennas : neighborAntennas;
+        const double perCarrierDbm = 10 * log10(peakTxW / 2 * chains / 64.0 * 1000);
         for (uint32_t c = 0; c < 2; ++c)
         {
             auto phy = NrHelper::GetGnbPhy(gnbDev.Get(g), c);

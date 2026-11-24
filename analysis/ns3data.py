@@ -9,11 +9,10 @@ WARMUP, DURATION, DRAIN, SLOT = 0.3, 1.5, 0.05, 0.5e-3
 TRANSITION_SYM = 2  # 71 us (SM1, off + on) at 30 kHz SCS
 
 
-def one_run(slots_file):
-    ant, off, run = map(float, re.match(r"a(\d+)_l([\d.]+)_r(\d+)_", slots_file.name).groups())
+def summary(slots_file, flows_file):
     s = pd.read_csv(slots_file)
     s = s[s.slot < round((WARMUP + DURATION) / SLOT)]           # drop the drain
-    f = pd.read_csv(str(slots_file).replace("_slots", "_flows"))
+    f = pd.read_csv(flows_file)
     # Both carriers share the MCPA: it can sleep only where neither transmits. Data starts
     # right after the control symbol on both, so the union of two blocks is the longer one.
     j = s.groupby("slot").agg(used=("used_sym", "max"), avail=("avail_sym", "max"))
@@ -27,8 +26,7 @@ def one_run(slots_file):
     e = sl[sl["empty"]].groupby("id").slot
     runs = (e.max() - e.min() + 1) * SLOT
     act = s[s.ues > 0].groupby("slot").ues.sum()
-    return dict(ant=int(ant), offered=off, run=int(run),
-                prb_load=s.used_reg.sum() / (s.avail_rb * s.avail_sym).sum(),
+    return dict(prb_load=s.used_reg.sum() / (s.avail_rb * s.avail_sym).sum(),
                 pa_off=idle.sum() / (j.avail + 1).sum(),        # +1: DL control, always on
                 empty_slots=empty.mean(),
                 idle_mean_ms=runs.mean() * 1e3 if len(runs) else 0.0,
@@ -39,6 +37,12 @@ def one_run(slots_file):
                 p95=np.average(f.delay_p95_s, weights=f.rx_pkts) if rx else np.nan,
                 loss=1 - rx / f.tx_pkts.sum() if len(f) else 0.0,
                 sent=f.tx_bytes.sum() * 8e-6 / DURATION)
+
+
+def one_run(slots_file):
+    ant, off, run = map(float, re.match(r"a(\d+)_l([\d.]+)_r(\d+)_", slots_file.name).groups())
+    flows_file = str(slots_file).replace("_slots", "_flows")
+    return dict(ant=int(ant), offered=off, run=int(run), **summary(slots_file, flows_file))
 
 
 def table():
