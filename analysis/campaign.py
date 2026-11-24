@@ -1,4 +1,4 @@
-"""Multi-seed campaign (bs-results-seg): AAU power and QoS per profile and chains, mean and 95% CI over seeds.
+"""Multi-seed campaign (bs-results-main): AAU power and QoS per profile and chains, mean and 95% CI over seeds.
 
 The same seed gives the same UE drop and traffic for every number of chains, so savings are paired."""
 from pathlib import Path
@@ -7,14 +7,15 @@ import pandas as pd
 import ns3data
 import power as pw
 
-RAW = ns3data.RAW.parent / "bs-results-seg"
+RAW = ns3data.RAW.parent / "bs-results-main"
 DURATION, SEEDS, W = 10, 10, pw.P_PEAK_W
 LIMIT_MS, SEGMENT_S = 20, 2.0  # ASSUMPTIONS: burst p95 limit, segment deadline
 MIN_RX = 0.99  # ASSUMPTION: a segment is usable with 99% of its packets (no retransmission over UDP)
+MAX_EXTRA_USERS, MAX_LOSS = 0.05, 0.01  # ASSUMPTIONS: extra share of burst users over the limit, loss
 T975 = 2.262  # Student t, 9 degrees of freedom
 
 runs, users, segs = [], [], []
-for prof in ("night", "day", "peak150"):
+for prof in ("night", "day", "peak100"):
     for a in (64, 32, 16):
         for r in range(1, SEEDS + 1):
             o = f"{prof}_a{a}_r{r}"
@@ -53,8 +54,15 @@ if __name__ == "__main__":
     s = whole.groupby(k)
     out["segments"], out["segments_late"], out["segment_max_s"] = s.size(), s.late.sum(), s.time_s.max()
     out["video_seeds_late"] = whole[whole.late].groupby(k).seed.nunique()
+    # QoS relative to 64 chains: same users, so a poor radio link counts the same in both.
+    share = out.users_over / out.users
+    out["extra_users_pct"] = 100 * (share - share.xs(64, level="chains").reindex(share.index, level="profile"))
+    late = out.segments_late.fillna(0)
+    out["extra_late"] = late - late.xs(64, level="chains").reindex(late.index, level="profile")
+    out["qos_ok"] = ((out.extra_users_pct <= 100 * MAX_EXTRA_USERS) & (late == 0)
+                     & (out.loss_pct < 100 * MAX_LOSS))
     out.to_csv(Path(__file__).parent / "campaign.csv")
     print(out.round(3).T.to_string())
-    print(burst[burst.profile == "peak150"].groupby(["chains", "seed"]).p95_ms.max().unstack())
-    print(runs[runs.profile == "peak150"].pivot(index="chains", columns="seed", values="loss_pct").round(2))
+    print(burst[burst.profile == "peak100"].groupby(["chains", "seed"]).p95_ms.max().unstack())
+    print(runs[runs.profile == "peak100"].pivot(index="chains", columns="seed", values="loss_pct").round(2))
     print(whole[whole.late].groupby(["chains", "seed", "ue"]).size())

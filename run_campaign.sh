@@ -10,6 +10,7 @@ DURATION=${DURATION:-10}
 VIDEO=${VIDEO:-segments}
 PROFILES=${PROFILES:-peak150 day night}
 CHAINS=${CHAINS:-64 32 16}
+TOTAL=$((SEEDS * $(echo $PROFILES | wc -w) * $(echo $CHAINS | wc -w)))
 docker start ns3-5g >/dev/null
 docker exec -w /ns3 ns3-5g ninja -C cmake-cache-opt scratch_bs-energy >/dev/null
 docker exec -w /ns3 ns3-5g mkdir -p "$OUT"
@@ -18,7 +19,7 @@ for run in $(seq "$SEEDS"); do for prof in $PROFILES; do for ant in $CHAINS; do
 done; done; done | docker exec -i -w /ns3 -e OUT="$OUT" -e DURATION="$DURATION" -e VIDEO="$VIDEO" \
   ns3-5g xargs -P "$JOBS" -L1 bash -c '
   o=$OUT/$0_a$1_r$2
-  [ -f ${o}_flows.csv ] && exit 0
+  [ -f ${o}_flows.csv ] && { echo "skip $0 $1 $2"; exit 0; }
   p="--profile=$0"
   case $0 in peak*) n=${0#peak}; p="--profile=peak --loadMbps=$((n - 53))";; esac
   LD_LIBRARY_PATH=build-opt/lib build-opt/scratch/ns3.46.1-bs-energy-optimized $p \
@@ -27,5 +28,5 @@ done; done; done | docker exec -i -w /ns3 -e OUT="$OUT" -e DURATION="$DURATION" 
   for k in slots segments flows; do
     [ -f ${o}.part_$k.csv ] && mv ${o}.part_$k.csv ${o}_$k.csv
   done
-  echo "done $0 $1 $2"'
+  echo "done $0 $1 $2"' | awk -v t="$TOTAL" '/^(done|skip)/ {print ++n "/" t, $0; fflush(); next} {print; fflush()}'
 echo campaign finished
