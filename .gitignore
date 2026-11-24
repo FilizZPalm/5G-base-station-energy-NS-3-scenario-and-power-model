@@ -1,0 +1,21 @@
+# Papers (copyrighted) and local notes
+/paper/
+/NOTES.md
+/Base_Station_Energy.pdf
+# /run_campaign.sh
+
+# NS-3 is third-party: ignore everything except our scenario
+/ns-3.46.1/*
+!/ns-3.46.1/scratch/
+/ns-3.46.1/scratch/*
+!/ns-3.46.1/scratch/bs-energy.cc
+
+# Local environment and generated files
+/.venv/
+/.vscode/
+__pycache__/
+.DS_Store
+
+# Outdated burst-only results
+/analysis/daily.csv
+/analysis/figures/daily_power.png
