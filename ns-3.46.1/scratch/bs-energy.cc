@@ -16,7 +16,9 @@
 #include "ns3/nr-module.h"
 #include "ns3/spectrum-module.h"
 
+#include <algorithm>
 #include <fstream>
+#include <functional>
 
 using namespace ns3;
 
@@ -214,6 +216,271 @@ class SegmentSource : public SimpleRefCount<SegmentSource>
     std::vector<Segment> m_segments;
 };
 
+/// Sleep state of the AAU of cell 0, shared by the schedulers of its carriers (one MCPA).
+/// After an idle timer it sleeps; down and up transitions take Tw each; traffic or a planned SSB
+/// wakes it up. Nothing is scheduled while it is not awake.
+class SleepController : public SimpleRefCount<SleepController>
+{
+  public:
+    enum State
+    {
+        AWAKE,
+        DOWN,
+        SLEEP,
+        UP
+    };
+
+    SleepController(double twMs, double ssbMs, double timerTw)
+        : m_tw(std::lround(twMs / 0.5)),
+          m_ssb(std::lround(ssbMs / 0.5)),
+          m_timer(std::lround(timerTw * twMs / 0.5))
+    {
+    }
+
+    /// Called at every slot boundary, starting from slot 0 at time 0.
+    void Tick()
+    {
+        const int64_t slot = m_slot++;
+        const int64_t toSsb = m_ssb > 0 ? (m_ssb - slot % m_ssb) % m_ssb : INT64_MAX / 4;
+        if (m_enabled && Simulator::Now() < m_stop)
+        {
+            m_count[m_state]++;
+        }
+        if ((m_state == DOWN || m_state == UP) && --m_left <= 0)
+        {
+            m_state = m_state == DOWN ? SLEEP : AWAKE;
+            m_lastActivity = slot;
+            if (m_state == AWAKE)
+            {
+                Release();
+            }
+        }
+        else if (m_state == SLEEP && (m_waiting || toSsb <= m_tw))
+        {
+            m_wakes += m_waiting;
+            Go(UP);
+        }
+        else if (m_state == AWAKE && m_enabled && !Busy() && slot - m_lastActivity > m_timer &&
+                 toSsb > 2 * m_tw + 1)
+        {
+            Go(DOWN);
+        }
+        // Keeps running during the drain, otherwise held data would never be released.
+        Simulator::Schedule(MicroSeconds(500), &SleepController::Tick, this);
+    }
+
+    void Start(Time enable, Time stop)
+    {
+        m_stop = stop;
+        Simulator::Schedule(enable, &SleepController::Enable, this);
+        Simulator::Schedule(Seconds(0), &SleepController::Tick, this);
+    }
+
+    bool Awake() const
+    {
+        return m_state == AWAKE;
+    }
+
+    void Activity()
+    {
+        m_lastActivity = m_slot;
+    }
+
+    /// Counts DL data or feedback while not awake: must stay at zero.
+    void CheckAwake()
+    {
+        m_violations += !Awake();
+    }
+
+    void TrafficWaiting()
+    {
+        m_waiting = true;
+    }
+
+    void OnRelease(std::function<void()> cb)
+    {
+        m_release.push_back(cb);
+    }
+
+    /// Registers a check for HARQ feedback still expected by a scheduler.
+    void OnPending(std::function<bool()> f)
+    {
+        m_pending.push_back(f);
+    }
+
+    void Print(std::ostream& os) const
+    {
+        os << "awake,down,sleep,up,wakes_by_traffic,violations\n"
+           << m_count[AWAKE] << ',' << m_count[DOWN] << ',' << m_count[SLEEP] << ',' << m_count[UP]
+           << ',' << m_wakes << ',' << m_violations << '\n';
+    }
+
+  private:
+    bool Busy() const
+    {
+        return std::any_of(m_pending.begin(), m_pending.end(), [](auto& f) { return f(); });
+    }
+
+    void Enable()
+    {
+        m_enabled = true;
+    }
+
+    void Go(State s)
+    {
+        m_state = s;
+        m_left = m_tw;
+    }
+
+    void Release()
+    {
+        m_waiting = false;
+        for (auto& cb : m_release)
+        {
+            cb();
+        }
+    }
+
+    int64_t m_tw;
+    int64_t m_ssb;
+    int64_t m_timer;
+    State m_state{AWAKE};
+    int64_t m_left{0};
+    int64_t m_slot{0};
+    int64_t m_lastActivity{0};
+    bool m_waiting{false};
+    bool m_enabled{false};
+    Time m_stop;
+    uint64_t m_count[4]{};
+    uint64_t m_wakes{0};
+    uint64_t m_violations{0};
+    std::vector<std::function<void()>> m_release;
+    std::vector<std::function<bool()>> m_pending;
+};
+
+static Ptr<SleepController> g_sleep;
+
+/// OFDMA PF scheduler that learns about new data only when the AAU is awake.
+class SleepyScheduler : public NrMacSchedulerOfdmaPF
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::SleepyScheduler")
+                                .SetParent<NrMacSchedulerOfdmaPF>()
+                                .AddConstructor<SleepyScheduler>();
+        return tid;
+    }
+
+    SleepyScheduler()
+    {
+        g_sleep->OnRelease([this]() { Flush(); });
+        g_sleep->OnPending([this]() { return FeedbackPending(); });
+    }
+
+    void DoSchedDlRlcBufferReq(
+        const NrMacSchedSapProvider::SchedDlRlcBufferReqParameters& params) override
+    {
+        const bool data = params.m_rlcTransmissionQueueSize + params.m_rlcRetransmissionQueueSize +
+                              params.m_rlcStatusPduSize >
+                          0;
+        if (g_sleep->Awake())
+        {
+            if (data)
+            {
+                g_sleep->Activity();
+            }
+            NrMacSchedulerOfdmaPF::DoSchedDlRlcBufferReq(params);
+            return;
+        }
+        // The latest report replaces the earlier ones: it carries the whole queue size.
+        m_held[{params.m_rnti, params.m_logicalChannelIdentity}] = params;
+        if (data)
+        {
+            g_sleep->TrafficWaiting();
+        }
+    }
+
+    void DoSchedDlTriggerReq(
+        const NrMacSchedSapProvider::SchedDlTriggerReqParameters& params) override
+    {
+        for (const auto& h : params.m_dlHarqInfoList)
+        {
+            Feedback(h);
+        }
+        NrMacSchedulerOfdmaPF::DoSchedDlTriggerReq(params);
+    }
+
+  protected:
+    std::shared_ptr<DciInfoElementTdma> CreateDlDci(
+        PointInFTPlane* spoint,
+        const std::shared_ptr<NrMacSchedulerUeInfo>& ueInfo,
+        uint32_t maxSym) const override
+    {
+        auto dci = NrMacSchedulerOfdmaPF::CreateDlDci(spoint, ueInfo, maxSym);
+        if (dci)
+        {
+            g_sleep->CheckAwake();
+            m_waiting.push_back({Simulator::Now(), dci});
+            g_sleep->Activity();
+        }
+        return dci;
+    }
+
+  private:
+    /// Data transmission waiting for its feedback; last is the time of the latest transmission.
+    struct Waiting
+    {
+        Time last;
+        std::shared_ptr<DciInfoElementTdma> dci;
+    };
+
+    void Feedback(const DlHarqInfo& h)
+    {
+        g_sleep->CheckAwake();
+        g_sleep->Activity();
+        auto it = std::find_if(m_waiting.begin(), m_waiting.end(), [&h](const Waiting& w) {
+            return w.dci->m_rnti == h.m_rnti && w.dci->m_harqProcess == h.m_harqProcessId;
+        });
+        if (it == m_waiting.end())
+        {
+            return;
+        }
+        if (h.IsReceivedOk() || h.m_numRetx >= 3)
+        {
+            m_waiting.erase(it);
+        }
+        else
+        {
+            it->last = Simulator::Now(); // a retransmission follows
+        }
+    }
+
+    bool FeedbackPending()
+    {
+        // Some allocations never get any feedback: do not wait for them longer than FEEDBACK.
+        std::erase_if(m_waiting, [](const Waiting& w) { return Simulator::Now() - w.last > FEEDBACK; });
+        return !m_waiting.empty();
+    }
+
+    void Flush()
+    {
+        for (auto& [key, params] : m_held)
+        {
+            NrMacSchedulerOfdmaPF::DoSchedDlRlcBufferReq(params);
+        }
+        m_held.clear();
+        g_sleep->Activity();
+    }
+
+    static inline const Time FEEDBACK = MilliSeconds(6); // seen within 5 ms
+    mutable std::vector<Waiting> m_waiting;
+    std::map<std::pair<uint16_t, uint8_t>, NrMacSchedSapProvider::SchedDlRlcBufferReqParameters>
+        m_held;
+};
+
+NS_OBJECT_ENSURE_REGISTERED(SleepyScheduler);
+
 int
 main(int argc, char* argv[])
 {
@@ -234,6 +501,9 @@ main(int argc, char* argv[])
     double videoPaceMbps = 100.0; // ASSUMPTION: server rate while a segment is sent
     double drain = 0.05;
     std::string association = "best";
+    double sleepTwMs = 0;    // wake-up (and fall-asleep) time of the sleep mode, 0: no sleep
+    double sleepSsbMs = 20;  // SSB period, 0: no SSB
+    double sleepTimerTw = 2; // idle time before sleeping, in units of Tw
     bool sharedShadowing = true; // same LOS state and shadowing on both carriers
     double warmup = 0.3;
     double duration = 1.0;
@@ -262,6 +532,9 @@ main(int argc, char* argv[])
     cmd.AddValue("sharedShadowing",
                  "Both carriers share LOS state and shadowing",
                  sharedShadowing);
+    cmd.AddValue("sleepTwMs", "Wake-up time of the sleep mode of cell 0 [ms], 0: off", sleepTwMs);
+    cmd.AddValue("sleepSsbMs", "SSB period [ms], 0: none", sleepSsbMs);
+    cmd.AddValue("sleepTimerTw", "Idle time before sleeping [Tw]", sleepTimerTw);
     cmd.AddValue("drain", "Extra time after the last transmission [s]", drain);
     cmd.AddValue("warmup", "Discarded initial time [s]", warmup);
     cmd.AddValue("duration", "Measured time [s]", duration);
@@ -426,13 +699,19 @@ main(int argc, char* argv[])
     nr->SetGnbBwpManagerAlgorithmAttribute("GBR_CONV_VOICE", UintegerValue(1));
     nr->SetUeBwpManagerAlgorithmAttribute("NGBR_LOW_LAT_EMBB", UintegerValue(0));
     nr->SetUeBwpManagerAlgorithmAttribute("GBR_CONV_VOICE", UintegerValue(1));
-    nr->SetSchedulerTypeId(TypeId::LookupByName("ns3::NrMacSchedulerOfdmaPF"));
+    if (sleepTwMs > 0)
+    {
+        g_sleep = Create<SleepController>(sleepTwMs, sleepSsbMs, sleepTimerTw);
+        g_sleep->Start(g_warmup, stop);
+    }
 
     // Site by site: only cell 0 changes its number of chains.
     NetDeviceContainer gnbDev;
     for (uint32_t g = 0; g < nGnb; ++g)
     {
         setGnbArray(g == 0 ? antennas : neighborAntennas);
+        nr->SetSchedulerTypeId(TypeId::LookupByName(
+            g == 0 && g_sleep ? "ns3::SleepyScheduler" : "ns3::NrMacSchedulerOfdmaPF"));
         gnbDev.Add(nr->InstallGnbDevice(NodeContainer(gnbs.Get(g)), bwps));
     }
     auto ueDev = nr->InstallUeDevice(ues, bwps);
@@ -585,6 +864,12 @@ main(int argc, char* argv[])
                   << seg.lastRx.GetSeconds() << '\n';
             }
         }
+    }
+    if (g_sleep)
+    {
+        std::ofstream z(out + "_sleep.csv");
+        g_sleep->Print(z);
+        g_sleep = nullptr;
     }
     Simulator::Destroy();
     return 0;
