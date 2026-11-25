@@ -1,10 +1,7 @@
-"""Turns raw NS-3 outputs into one table: (antennas, offered load) -> PRB load, idle PA time, QoS."""
-import re
+"""Turns the raw NS-3 outputs of one run into metrics: PRB load, idle PA time, QoS."""
 import numpy as np
 import pandas as pd
-from lib import paths
 
-RAW = paths.RAW / "bs-results"
 WARMUP, DURATION, DRAIN, SLOT = 0.3, 1.5, 0.05, 0.5e-3
 TRANSITION_SYM = 2  # 71 us (SM1, off + on) at 30 kHz SCS
 
@@ -37,22 +34,3 @@ def summary(slots_file, flows_file, duration=DURATION):
                 p95=np.average(f.delay_p95_s, weights=f.rx_pkts) if rx else np.nan,
                 loss=1 - rx / f.tx_pkts.sum() if len(f) else 0.0,
                 sent=f.tx_bytes.sum() * 8e-6 / duration)
-
-
-def one_run(slots_file):
-    ant, off, run = map(float, re.match(r"a(\d+)_l([\d.]+)_r(\d+)_", slots_file.name).groups())
-    flows_file = str(slots_file).replace("_slots", "_flows")
-    return dict(ant=int(ant), offered=off, run=int(run), **summary(slots_file, flows_file))
-
-
-def table():
-    rows = [one_run(p) for p in sorted(RAW.glob("a*_r*_slots.csv")) if "part" not in p.name]
-    return pd.DataFrame(rows)
-
-
-if __name__ == "__main__":
-    t = table()
-    pd.set_option("display.width", 250, "display.max_columns", 30)
-    print(t.groupby(["ant", "offered"]).mean().round(4).drop(columns="run"))
-    t.to_csv(paths.OLD_RESULTS / "metrics.csv", index=False)
-    print(t.groupby(["ant", "offered"]).size().to_string())
