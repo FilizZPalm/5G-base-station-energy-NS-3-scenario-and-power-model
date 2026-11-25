@@ -6,12 +6,10 @@ so shapes and relative savings are compared, not only watts."""
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import campaign as c
-import power as pw
-from daily import HOURS, half_ci
-from plots import AQUA, BLUE, CHAINS, INK, MUTED, ORANGE, PROFILES, save
+from lib import campaign as c, paths, power as pw
+from studies.daily import HOURS, half_ci
+from lib.style import AQUA, BLUE, CHAINS, INK, MUTED, ORANGE, PROFILES, save
 
-HERE = c.Path(__file__).parent
 K_USERS = 1  # ASSUMPTION: SU-MIMO, one UE per resource (sensitivity with 10 below)
 B_HZ = 60e6  # two 30 MHz carriers
 w = c.runs.set_index(["profile", "chains", "seed"]).sort_index()
@@ -60,7 +58,7 @@ if __name__ == "__main__":
                              saving_pct=(100 * (1 - e / e0)).mean(), saving_ci=half_ci(100 * (1 - e / e0)),
                              **{p: policy_watt(n, p, pol).mean() for p in HOURS}))
     r = pd.DataFrame(rows)
-    r.to_csv(HERE / "models.csv", index=False)
+    r.to_csv(paths.RESULTS / "models.csv", index=False)
     print(r.round(2).to_string(index=False))
     print("\nzero load / full load:")
     for n in MODELS:

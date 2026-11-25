@@ -7,12 +7,9 @@ Lower bound on the delay: only the cell queue is modelled, with no change in sch
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import campaign as c
-import ns3data
-import power as pw
-from plots import AQUA, BLUE, INK, MUTED, ORANGE, save
+from lib import campaign as c, ns3data, paths, power as pw
+from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, save
 
-HERE = c.Path(__file__).parent
 SLOT_MS = ns3data.SLOT * 1e3
 FIRST, N = round(ns3data.WARMUP / ns3data.SLOT), round(c.DURATION / ns3data.SLOT)
 # ASSUMPTIONS ---------------------------------------------------------------------------
@@ -97,7 +94,7 @@ if __name__ == "__main__":
                                          delay_mean=dly.mean(), delay_p95=np.percentile(dly, 95),
                                          delay_max=dly.max(), unserved=left))
     r = pd.DataFrame(rows)
-    r.to_csv(HERE / "wakeup.csv", index=False)
+    r.to_csv(paths.RESULTS / "wakeup.csv", index=False)
     pd.set_option("display.width", 220, "display.max_rows", 200)
     print({k: round(idle_watt(a), 1) for k, a in CASES.items()}, {k: round(v * c.W, 1) for k, v in DEPTH.items()})
     print(r[(r.depth == "RF off")].round(2).drop(columns="depth").to_string(index=False))

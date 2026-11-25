@@ -2,12 +2,10 @@
 
 Cell 0 uses 64, 32 or 16 chains, the other sites always 64. Carrier shutdown and deep dormancy
 come from the power formula only: no NS-3 run, wake-up time or 4G QoS is considered."""
-from pathlib import Path
 import pandas as pd
-import ns3data
-import power as pw
+from lib import ns3data, paths, power as pw
 
-RAW = ns3data.RAW.parent / "bs-results-test" / "sumimo"
+RAW = paths.RAW / "bs-results-test" / "sumimo"
 W = pw.P_PEAK_W
 ANCHOR_W_PER_MBPS = 1.0  # ASSUMPTION: extra 4G power (Uitto: 160 W idle -> 170 W at 10 Mbit/s)
 
@@ -29,5 +27,5 @@ d = pd.DataFrame(rows)
 d["saving_%"] = 100 * (1 - d.watt / d.groupby("profile").watt.transform("first"))
 d["delay_ms"], d["p95_ms"] = d.delay * 1e3, d.p95 * 1e3
 d = d[["profile", "state", "watt", "saving_%", "prb_load", "pa_off", "sent", "delay_ms", "p95_ms", "loss"]]
-d.to_csv(Path(__file__).parent / "profiles.csv", index=False)
+d.to_csv(paths.OLD_RESULTS / "profiles.csv", index=False)
 print(d.round(4).to_string(index=False))

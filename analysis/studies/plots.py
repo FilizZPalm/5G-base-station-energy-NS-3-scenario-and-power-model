@@ -1,33 +1,13 @@
 """Figures from the multi-seed campaign (bs-results-main): PNG files in figures/."""
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import campaign as c
-import power as pw
+from lib import campaign as c, power as pw
+from lib.style import AQUA, BLUE, CHAINS, INK, MUTED, NOTE, ORANGE, PROFILES, save
 
-OUT = c.Path(__file__).parent / "figures"
-OUT.mkdir(exist_ok=True)
-PROFILES = {"night": "Night (1 Mbit/s)", "day": "Day (40 Mbit/s)", "peak100": "Peak (100 Mbit/s)"}
-CHAINS = (64, 32, 16)
-ANCHOR_W_PER_MBPS = 1.0  # ASSUMPTION: extra 4G power (Uitto: 160 W idle -> 170 W at 10 Mbit/s)
-BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
-INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e1e0d9"
-NOTE = "10 seeds, 10 s per run; SU-MIMO; neighbour cells at 64 chains"
-plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.right": False,
-                     "axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED,
-                     "ytick.color": MUTED, "axes.grid": True, "grid.color": GRID, "axes.axisbelow": True})
 g = c.runs.groupby(["profile", "chains"])
 mean = g[["watt", "watt_sym", "sent"]].mean()
 ci = g[["watt", "watt_sym"]].std() * c.T975 / np.sqrt(c.SEEDS)
 over = 100 * c.burst.assign(o=c.burst.p95_ms > c.LIMIT_MS).groupby(["profile", "chains"]).o.mean()
-
-
-def save(fig, name, note=NOTE):
-    fig.tight_layout(rect=(0, 0.06, 1, 1))
-    fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
-    fig.savefig(OUT / name, dpi=200, facecolor="white")
-    plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -63,7 +43,7 @@ if __name__ == "__main__":
     # 3. Night power by sleep mode
     n = [(f"{a} chains" + s, mean.loc[("night", a), col], BLUE) for a in CHAINS
          for s, col in (("", "watt"), (" + symbol", "watt_sym"))]
-    extra = ANCHOR_W_PER_MBPS * mean.loc[("night", 64), "sent"]
+    extra = pw.ANCHOR_W_PER_MBPS * mean.loc[("night", 64), "sent"]
     n += [("all carriers off", pw.CARRIER_OFF * c.W + extra, ORANGE),
           ("deep dormancy", pw.DORMANT * c.W + extra, ORANGE)]
     n.sort(key=lambda t: t[1])

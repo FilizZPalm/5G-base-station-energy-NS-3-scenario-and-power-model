@@ -1,5 +1,5 @@
-"""Checks against numbers stated in the papers. Run: python test_power.py"""
-import power as p
+"""Checks against numbers stated in the papers. Run from analysis/: python -m tests.test_power"""
+from lib import power as p
 
 zero = float(p.piovesan(0))
 assert abs(float(p.piovesan(1)) - 1) < 1e-9

@@ -5,11 +5,10 @@ Formula-only night states are left out: their traffic is carried by the 4G layer
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import campaign as c
-from daily import HOURS, POLICIES, energy, half_ci
-from plots import BLUE, CHAINS, INK, MUTED, ORANGE, PROFILES, save
+from lib import campaign as c, paths
+from studies.daily import HOURS, POLICIES, energy, half_ci
+from lib.style import BLUE, CHAINS, INK, MUTED, ORANGE, PROFILES, save
 
-HERE = c.Path(__file__).parent
 w = c.runs.set_index(["profile", "chains", "seed"]).sort_index()
 seeds = range(1, c.SEEDS + 1)
 
@@ -28,7 +27,7 @@ def daily_kbit_per_joule(policy):
 
 
 if __name__ == "__main__":
-    qos = pd.read_csv(HERE / "campaign.csv", index_col=["profile", "chains"])
+    qos = pd.read_csv(paths.RESULTS / "campaign.csv", index_col=["profile", "chains"])
     # Relative QoS criterion (users over the limit, loss); written by campaign.py
     ok = (qos.extra_users_pct <= 100 * c.MAX_EXTRA_USERS) & (qos.loss_pct < 100 * c.MAX_LOSS)
     rows = []
@@ -41,7 +40,7 @@ if __name__ == "__main__":
                 rows.append(dict(profile=p, chains=a, symbol=bool(sym), kbit_J=v.mean(), kbit_J_ci=half_ci(v),
                                  gain_pct=gain.mean(), gain_ci=half_ci(gain), qos_ok=bool(ok[(p, a)])))
     r = pd.DataFrame(rows)
-    r.to_csv(HERE / "efficiency.csv", index=False)
+    r.to_csv(paths.RESULTS / "efficiency.csv", index=False)
     pd.set_option("display.width", 200)
     print(r.round(2).to_string(index=False))
     ref = daily_kbit_per_joule("always on")

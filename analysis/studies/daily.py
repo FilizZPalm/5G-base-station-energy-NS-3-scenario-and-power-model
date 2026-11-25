@@ -2,16 +2,12 @@
 
 Each hour of the day is one of the three simulated levels; hours per level are an assumption.
 Sleep modes with a formula only (all carriers off, deep dormancy) are marked: no wake-up, no 4G QoS."""
-import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import campaign as c
-import power as pw
-from plots import ANCHOR_W_PER_MBPS, BLUE, GRID, INK, MUTED, ORANGE, OUT
+from lib import campaign as c, paths, power as pw
+from lib.style import BLUE, INK, MUTED, ORANGE, OUT
 
-HERE = c.Path(__file__).parent
 # ASSUMPTIONS ---------------------------------------------------------------------------
 HOURS = {"night": 8, "day": 12, "peak100": 4}
 SENSITIVITY = {"6/14/4": (6, 14, 4), "8/12/4 (base)": (8, 12, 4), "10/10/4": (10, 10, 4),
@@ -33,7 +29,7 @@ def level_power(policy, level):
     """AAU power of a level, one value per seed [W]."""
     if level == "night" and policy in NIGHT_STATES:
         sent = np.array([w.loc[("night", 64, s), "sent"] for s in seeds])
-        return NIGHT_STATES[policy] * c.W + ANCHOR_W_PER_MBPS * sent
+        return NIGHT_STATES[policy] * c.W + pw.ANCHOR_W_PER_MBPS * sent
     a, sym = POLICIES.get(policy, POLICIES["symbol + channel"])[level]
     return np.array([w.loc[(level, a, s), "watt_sym" if sym else "watt"] for s in seeds])
 
@@ -57,7 +53,7 @@ if __name__ == "__main__":
         rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=s.mean(), saving_ci=half_ci(s),
                          **{f"W_{l}": level_power(n, l).mean() for l in HOURS}))
     r = pd.DataFrame(rows).set_index("policy")
-    r.to_csv(HERE / "daily.csv")
+    r.to_csv(paths.RESULTS / "daily.csv")
     pd.set_option("display.width", 200, "display.max_columns", 20)
     print(r.round(2).to_string())
     t = {k: {n: 100 * (1 - energy(n, dict(zip(HOURS, v))).mean() / energy("always on", dict(zip(HOURS, v))).mean())

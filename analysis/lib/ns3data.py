@@ -1,10 +1,10 @@
 """Turns raw NS-3 outputs into one table: (antennas, offered load) -> PRB load, idle PA time, QoS."""
 import re
-from pathlib import Path
 import numpy as np
 import pandas as pd
+from lib import paths
 
-RAW = Path(__file__).resolve().parent.parent / "ns-3.46.1" / "bs-results"
+RAW = paths.RAW / "bs-results"
 WARMUP, DURATION, DRAIN, SLOT = 0.3, 1.5, 0.05, 0.5e-3
 TRANSITION_SYM = 2  # 71 us (SM1, off + on) at 30 kHz SCS
 
@@ -54,5 +54,5 @@ if __name__ == "__main__":
     t = table()
     pd.set_option("display.width", 250, "display.max_columns", 30)
     print(t.groupby(["ant", "offered"]).mean().round(4).drop(columns="run"))
-    t.to_csv(Path(__file__).parent / "metrics.csv", index=False)
+    t.to_csv(paths.OLD_RESULTS / "metrics.csv", index=False)
     print(t.groupby(["ant", "offered"]).size().to_string())

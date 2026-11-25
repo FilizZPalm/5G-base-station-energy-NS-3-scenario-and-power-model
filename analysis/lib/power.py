@@ -10,6 +10,7 @@ PTX_MAX = ETA * (1 - P0 - PBB - P_TRAN - P_PA)
 
 # Nominal peak in watt: Uitto macro site at saturation (1090 W) minus its 4G anchor (~160 W).
 P_PEAK_W = 1090.0 - 160.0
+ANCHOR_W_PER_MBPS = 1.0  # ASSUMPTION: extra 4G power (Uitto: 160 W idle -> 170 W at 10 Mbit/s)
 
 
 def piovesan(load, m_ac=M_AV, pa_off=0.0):

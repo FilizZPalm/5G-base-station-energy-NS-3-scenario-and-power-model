@@ -1,13 +1,11 @@
 """Multi-seed campaign (bs-results-main): AAU power and QoS per profile and chains, mean and 95% CI over seeds.
 
 The same seed gives the same UE drop and traffic for every number of chains, so savings are paired."""
-from pathlib import Path
 import numpy as np
 import pandas as pd
-import ns3data
-import power as pw
+from lib import ns3data, paths, power as pw
 
-RAW = ns3data.RAW.parent / "bs-results-main"
+RAW = paths.RAW / "bs-results-main"
 DURATION, SEEDS, W = 10, 10, pw.P_PEAK_W
 LIMIT_MS, SEGMENT_S = 20, 2.0  # ASSUMPTIONS: burst p95 limit, segment deadline
 MIN_RX = 0.99  # ASSUMPTION: a segment is usable with 99% of its packets (no retransmission over UDP)
@@ -61,7 +59,7 @@ if __name__ == "__main__":
     out["extra_late"] = late - late.xs(64, level="chains").reindex(late.index, level="profile")
     out["qos_ok"] = ((out.extra_users_pct <= 100 * MAX_EXTRA_USERS) & (late == 0)
                      & (out.loss_pct < 100 * MAX_LOSS))
-    out.to_csv(Path(__file__).parent / "campaign.csv")
+    out.to_csv(paths.RESULTS / "campaign.csv")
     print(out.round(3).T.to_string())
     print(burst[burst.profile == "peak100"].groupby(["chains", "seed"]).p95_ms.max().unstack())
     print(runs[runs.profile == "peak100"].pivot(index="chains", columns="seed", values="loss_pct").round(2))

@@ -3,14 +3,11 @@
 Power: symbol shutdown as in campaign.py, minus the sleep time in the 'RF off' state (wakeup.py)."""
 import numpy as np
 import pandas as pd
-import campaign as c
-import ns3data
-import power as pw
-from daily import HOURS, energy, half_ci
-from wakeup import CASES, idle_watt
+from lib import campaign as c, ns3data, paths, power as pw
+from studies.daily import HOURS, energy, half_ci
+from studies.wakeup import CASES, idle_watt
 
-HERE = c.Path(__file__).parent
-RAW = ns3data.RAW.parent / "bs-results-wake"
+RAW = paths.RAW / "bs-results-wake"
 SETTINGS = [("0.5", 20), ("5", 20), ("5", 160)]  # Tw [ms], SSB period [ms]
 seeds = range(1, c.SEEDS + 1)
 main = c.runs.set_index(["profile", "chains", "seed"])
@@ -51,7 +48,7 @@ if __name__ == "__main__":
                         loss=g.loss.mean(), ref_loss=g.ref_loss.mean(), violations=int(g.violations.sum())))
     r = pd.DataFrame(out)
     r["extra_users_pct"] = 100 * (r.over - r.ref_over) / r.users
-    r.to_csv(HERE / "wakeup_ns3.csv", index=False)
+    r.to_csv(paths.RESULTS / "wakeup_ns3.csv", index=False)
     pd.set_option("display.width", 250, "display.max_columns", 30)
     print(r.round(2).to_string(index=False))
     s = pd.concat(segs)

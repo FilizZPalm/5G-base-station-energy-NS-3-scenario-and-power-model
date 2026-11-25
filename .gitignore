@@ -16,6 +16,6 @@
 __pycache__/
 .DS_Store
 
-# Generated results
-/analysis/*.csv
-/analysis/figures/daily_power.png
+# Generated results and figures
+/analysis/results/
+/analysis/figures/

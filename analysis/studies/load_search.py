@@ -1,9 +1,8 @@
 """Peak load search (bs-results-load): which offered load do 64 chains sustain in each seed."""
 import pandas as pd
-import ns3data
-import power as pw
+from lib import ns3data, paths, power as pw
 
-RAW = ns3data.RAW.parent / "bs-results-load"
+RAW = paths.RAW / "bs-results-load"
 LOADS, SEEDS, DURATION, CHAINS = (80, 100, 120), 10, 10, 64
 LIMIT_MS, SEGMENT_S, MIN_RX, MAX_LOSS = 20, 2.0, 0.99, 0.01  # ASSUMPTIONS
 
