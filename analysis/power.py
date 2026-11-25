@@ -27,10 +27,13 @@ CARRIER_OFF = P0 + PBB
 DORMANT = P0
 
 
-def earth(load, kind="RRH"):
-    """EARTH (Auer et al. 2011, Table 2), LTE site, watt, no sleep. load = Pout/Pmax."""
-    n, pmax, p0, dp = {"Macro": (6, 20.0, 130.0, 4.7), "RRH": (6, 20.0, 84.0, 2.8)}[kind]
-    return n * (p0 + dp * pmax * np.asarray(load, float))
+def earth(load, kind="RRH", asleep=0.0):
+    """EARTH (Auer et al. 2011, Table 2), LTE site, watt. load = Pout/Pmax averaged over time.
+    asleep: fraction of time without transmission, spent in the micro sleep state (Psleep)."""
+    n, pmax, p0, dp, psleep = {"Macro": (6, 20.0, 130.0, 4.7, 75.0),
+                               "RRH": (6, 20.0, 84.0, 2.8, 56.0)}[kind]
+    f = np.asarray(asleep, float)
+    return n * (p0 * (1 - f) + psleep * f + dp * pmax * np.asarray(load, float))
 
 
 def bjornson(load, rate_gbps, m=64, k=10, b=60e6, ptx_w=PTX_MAX * P_PEAK_W):
