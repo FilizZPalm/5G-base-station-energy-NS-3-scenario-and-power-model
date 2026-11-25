@@ -501,6 +501,7 @@ main(int argc, char* argv[])
     double videoPaceMbps = 100.0; // ASSUMPTION: server rate while a segment is sent
     double drain = 0.05;
     std::string association = "best";
+    std::string scheduler = "ofdma"; // PF in both cases
     double sleepTwMs = 0;    // wake-up (and fall-asleep) time of the sleep mode, 0: no sleep
     double sleepSsbMs = 20;  // SSB period, 0: no SSB
     double sleepTimerTw = 2; // idle time before sleeping, in units of Tw
@@ -535,6 +536,7 @@ main(int argc, char* argv[])
     cmd.AddValue("sleepTwMs", "Wake-up time of the sleep mode of cell 0 [ms], 0: off", sleepTwMs);
     cmd.AddValue("sleepSsbMs", "SSB period [ms], 0: none", sleepSsbMs);
     cmd.AddValue("sleepTimerTw", "Idle time before sleeping [Tw]", sleepTimerTw);
+    cmd.AddValue("scheduler", "ofdma or tdma (proportional fair), all sites", scheduler);
     cmd.AddValue("drain", "Extra time after the last transmission [s]", drain);
     cmd.AddValue("warmup", "Discarded initial time [s]", warmup);
     cmd.AddValue("duration", "Measured time [s]", duration);
@@ -550,6 +552,8 @@ main(int argc, char* argv[])
     NS_ABORT_MSG_IF(association != "best" && association != "geometric",
                     "association: best or geometric");
     const bool best = association == "best";
+    NS_ABORT_MSG_IF(scheduler != "ofdma" && scheduler != "tdma", "scheduler: ofdma or tdma");
+    NS_ABORT_MSG_IF(scheduler == "tdma" && sleepTwMs > 0, "the sleep mode needs the ofdma scheduler");
     // Video rates [Mbit/s] of the first UEs of each site (720p, 1080p, 4K in Uitto et al.).
     std::vector<double> video;
     if (profile == "night")
@@ -711,7 +715,9 @@ main(int argc, char* argv[])
     {
         setGnbArray(g == 0 ? antennas : neighborAntennas);
         nr->SetSchedulerTypeId(TypeId::LookupByName(
-            g == 0 && g_sleep ? "ns3::SleepyScheduler" : "ns3::NrMacSchedulerOfdmaPF"));
+            g == 0 && g_sleep     ? "ns3::SleepyScheduler"
+            : scheduler == "tdma" ? "ns3::NrMacSchedulerTdmaPF"
+                                  : "ns3::NrMacSchedulerOfdmaPF"));
         gnbDev.Add(nr->InstallGnbDevice(NodeContainer(gnbs.Get(g)), bwps));
     }
     auto ueDev = nr->InstallUeDevice(ues, bwps);
