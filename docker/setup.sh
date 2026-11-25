@@ -1,6 +1,6 @@
 #!/bin/bash
 # Creates the ns3-5g container from docker/Dockerfile and compiles bs-energy (optimized build).
-# Never touches an existing container. NS-3 + 5G-LENA must already be in ns-3.46.1/ (see README/NOTES).
+# Never touches an existing container. NS-3 + 5G-LENA must already be in ns-3.46.1/ (see README.md).
 set -euo pipefail
 NAME=${NAME:-ns3-5g}
 IMAGE=${IMAGE:-ns3-5g-env}

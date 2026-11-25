@@ -1,4 +1,4 @@
-# Build and run environment for NS-3 3.46.1 + 5G-LENA (5g-lena-v4.1.y).
+# Build and run environment for NS-3 3.46.1 + 5G-LENA v4.1.1.
 # The NS-3 sources are not copied: they are mounted at /ns3 when the container is created (setup.sh).
 FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
 
