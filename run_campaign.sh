@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs profiles x chains x seeds inside the ns3-5g container (optimized build).
-# Profiles: night, nightNN (NN Mbit/s), day, peakNNN (NNN Mbit/s offered: 53 of video, the rest bursts).
+# Profiles: night, nightNN (NN Mbit/s), day, dayNN (NN Mbit/s), peakNNN (NNN Mbit/s offered: 53 of video, the rest bursts).
 # Resumable: finished runs are skipped. Runs go seed by seed, so partial results stay balanced.
 set -euo pipefail
 OUT=${OUT:-bs-results-seg}
@@ -28,6 +28,7 @@ done; done; done | docker exec -i -w /ns3 -e OUT="$OUT" -e DURATION="$DURATION" 
   case $0 in
     peak*) n=${0#peak}; p="--profile=peak --loadMbps=$((n - 53))";;
     night?*) p="--profile=night --loadMbps=${0#night}";;
+    day?*) p="--profile=day --loadMbps=${0#day}";;
   esac
   LD_LIBRARY_PATH=build-opt/lib build-opt/scratch/ns3.46.1-bs-energy-optimized $p \
     --antennas=$1 --run=$2 --video=$VIDEO --scheduler=$SCHEDULER --neighborScheduler=$NEIGHBOR --tbTrace=$TB_TRACE --duration=$DURATION --drain=0.5 --out=${o}.part \

@@ -17,6 +17,7 @@ with the AAU power model of Piovesan et al. (2022).
 | Energy efficiency over a day | 53.3 -> 73.3 kbit/J (+37%) |
 | TDMA instead of OFDMA scheduling | about 1% less energy over a day, and fewer users over 20 ms at peak (8 -> 4 of 70) |
 | Same traffic, 3GPP power model (TR 38.864) | symbol + channel **-48%**; with light sleep at night (SSB every 160 ms) **-55.5%** |
+| A rule that picks the chains from the load measured every 5 min | **-24.0%** with QoS unacceptable 0.04% of the time (oracle -27.6%) |
 
 All of this rests on the assumptions listed [at the end](#main-assumptions-and-limits): the traffic
 levels, the hours per level, the 20 ms delay limit and the pairing of sleep times with sleep powers.
@@ -53,7 +54,7 @@ power amplifier (PA), $\eta$ the PA efficiency and $P_{\mathrm{TX},c}$ the trans
 - **Symbol shutdown**: the PAs sleep in downlink symbols that carry no data on either carrier, minus
   two transition symbols. One control symbol per slot always stays on.
 - **Channel shutdown**: 32 or 16 of the 64 transceiver chains stay active ($M_{\mathrm{ac}}$); the array shrinks in
-  NS-3 too, so the loss of beamforming gain is simulated.
+  NS-3 too, so the loss of beamforming gain is simulated. 48 and 24 are also available (step 11).
 - **Carrier shutdown and deep dormancy**: from the formula only (no wake-up, traffic moved to 4G).
 
 **QoS.** Per burst user, the 95th percentile (p95) of the packet delay, against a 20 ms limit. A
@@ -218,6 +219,47 @@ traces, then simulated in NS-3 for Category 1 (50 runs, wake-up time = half of t
 - deep sleep needs 50 ms, which does not fit between SSBs 20 ms apart. Category 2 transitions (640 ms
   and 10 s) fit only without any SSB, and its deep sleep is longer than the simulated window.
 
+### 11. A policy that picks the chains by itself
+
+The best settings of step 2 assume someone knows the traffic level. Here a simple rule decides alone:
+every 5, 15 or 60 minutes it looks at the load just measured, adds a safety margin (0, 25, 50 or 100%) and
+keeps the fewest chains that sustain that load for the next interval. Two arrays were added to the scenario,
+48 (6 x 8) and 24 (4 x 6) chains, and the day profile was simulated from 5 to 100 Mbit/s every 10 Mbit/s
+at all five chain counts (560 runs, `bs-results-grid`).
+
+| Chains | QoS acceptable up to | Power at 100 Mbit/s with symbol shutdown |
+|---|---|---|
+| 16 | 40 Mbit/s | 526 W (fails) |
+| 24 | 50 Mbit/s | 563 W (fails) |
+| 32 | 50 Mbit/s | 599 W (fails) |
+| 48 | 100 Mbit/s | 662 W |
+| 64 | 100 Mbit/s | 723 W |
+
+48 chains sustain the whole peak, so 64 are almost never needed; 32 are never chosen, since 24 sustain the
+same load for less. The rule was tested on 300 simulated days of 5-minute loads: our 8/12/4 h levels with
+one-hour ramps, times a random log-normal fluctuation (σ = 0.25, correlated between steps). Each step uses
+the power and QoS of the 10 s runs at its load, and switching chains is taken as instantaneous.
+
+![One simulated day and the chains the rule picks](analysis/figures/policy_day.png)
+
+![Saving against time with QoS not acceptable](analysis/figures/policy_tradeoff.png)
+
+| Policy | Saving, Piovesan | Saving, 3GPP Cat. 1 | Time with QoS not acceptable |
+|---|---|---|---|
+| 64 chains + symbol, no decision | 18.9% | 39.1% | 0 |
+| Oracle (knows the load of each step) | 27.6% | 48.5% | 0 |
+| Every 5 min, margin 50% | 24.0% | 45.3% | 0.04% |
+| Every 5 min, margin 100% | 22.8% | 44.1% | 0 |
+| Every 15 min, margin 100% | 22.8% | 44.1% | 0.05% |
+| Every 60 min, margin 100% | 23.1% | 44.2% | 1.2% |
+
+Without a margin the rule saves as much as the oracle but leaves the QoS unacceptable 7-16% of the time,
+every day: the load rises within the interval. Deciding every 5-15 minutes with a wide margin keeps about
+23-24% with almost no violation; deciding every hour is too slow. The intermediate arrays add 2-3 points
+compared with a choice among 64, 32 and 16 only (oracle 24.2%, 5 min with 50% margin 21.4%). Taking the
+100 Mbit/s point from the peak profile with video instead of the day profile (`--peak`) changes no
+acceptable load and no saving by more than 0.1 points.
+
 ## Contents
 
 | Path | What it is |
@@ -294,7 +336,13 @@ night 16 3 160
 night 16 25 160
 day 16 3 20
 peak100 64 3 20" ./run_wakeup.sh                                                     # 3GPP light and deep sleep
+OUT=bs-results-grid PROFILES="day5 day10 day20 day30 day50 day60 day70 day80 day90 day100" \
+  ./run_campaign.sh                                                                 # load grid, 64/32/16 chains
+OUT=bs-results-grid PROFILES="night day5 day10 day20 day30 day40 day50 day60 day70 day80 day90 day100 peak100" \
+  CHAINS="48 24" ./run_campaign.sh                                                  # load grid, 48/24 chains
 ```
+
+The two grid campaigns are 560 runs, about 4 h 30.
 
 ## Analysis
 
@@ -320,6 +368,7 @@ cd analysis
 | `studies.tdma` | TDMA against OFDMA | main and TDMA campaigns |
 | `studies.mix` | Scheduler of cell 0 and of the neighbours, per-block errors | mix campaign |
 | `studies.threegpp` | 3GPP TR 38.864 power model, with its light and deep sleep | main and 3GPP sleep campaigns |
+| `studies.policy` | A rule that picks the chains from the measured load (`--peak`: 100 Mbit/s with video) | main and grid campaigns |
 
 ## Main assumptions and limits
 
@@ -339,5 +388,7 @@ cd analysis
   A simple one driving the errors to 10% is available (`--ollaStep`, off by default), but in a trial at
   peak it made delay, losses and power much worse: lower MCS needs more resources, which raises the
   interference on the neighbours. All results are without it.
+- The policy study (step 11) treats each 5-minute step as one of the 10 s runs at its load, and takes a
+  change of chains as instantaneous and free; the day-to-day fluctuation of the load is an assumption.
 - With 10 seeds the QoS differences have wide intervals: the TDMA delay improvement is clear only at 64
   chains.

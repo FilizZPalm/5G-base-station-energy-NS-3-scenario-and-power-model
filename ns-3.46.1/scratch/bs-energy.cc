@@ -686,7 +686,7 @@ main(int argc, char* argv[])
     cmd.AddValue("profile", "night, day or peak", profile);
     cmd.AddValue("loadMbps", "Offered DL burst load per cell [Mbit/s]", loadMbps);
     cmd.AddValue("activeUes", "UEs with traffic per site", activeUes);
-    cmd.AddValue("antennas", "Active RF chains of cell 0 (64, 32, 16)", antennas);
+    cmd.AddValue("antennas", "Active RF chains of cell 0 (64, 48, 32, 24, 16)", antennas);
     cmd.AddValue("neighborAntennas", "Active RF chains of the other sites", neighborAntennas);
     cmd.AddValue("suMimo", "Enable SU-MIMO (2 streams, dual polarization)", suMimo);
     cmd.AddValue("nGnb", "Number of sites", nGnb);
@@ -723,10 +723,6 @@ main(int argc, char* argv[])
     cmd.AddValue("out", "Output file prefix", out);
     cmd.Parse(argc, argv);
 
-    for (auto a : {antennas, neighborAntennas})
-    {
-        NS_ABORT_MSG_IF(a != 64 && a != 32 && a != 16, "antennas: 64, 32 or 16");
-    }
     NS_ABORT_MSG_IF(videoModel != "segments" && videoModel != "cbr", "video: segments or cbr");
     NS_ABORT_MSG_IF(association != "best" && association != "geometric",
                     "association: best or geometric");
@@ -868,11 +864,20 @@ main(int argc, char* argv[])
     }
     std::cout << "rejected_positions " << rejected << std::endl;
 
+    // Array shape per number of chains, rows x columns of elements; 48 and 24 keep the array
+    // no wider than 64 chains (8 columns).
+    const std::map<uint32_t, std::pair<uint32_t, uint32_t>> shapes{{64, {8, 8}},
+                                                                   {48, {6, 8}},
+                                                                   {32, {4, 8}},
+                                                                   {24, {4, 6}},
+                                                                   {16, {4, 4}}};
+    NS_ABORT_MSG_IF(!shapes.contains(antennas) || !shapes.contains(neighborAntennas),
+                    "antennas: 64, 48, 32, 24 or 16");
     auto setGnbArray = [&](uint32_t chains) {
-        const uint32_t rows = chains == 64 ? 8 : 4;
+        const auto [rows, cols] = shapes.at(chains);
         // Dual polarization doubles the elements per position: halve the rows.
         nr->SetGnbAntennaAttribute("NumRows", UintegerValue(suMimo ? rows / 2 : rows));
-        nr->SetGnbAntennaAttribute("NumColumns", UintegerValue(chains / rows));
+        nr->SetGnbAntennaAttribute("NumColumns", UintegerValue(cols));
     };
     nr->SetGnbAntennaAttribute("AntennaElement",
                                PointerValue(CreateObject<IsotropicAntennaModel>()));
