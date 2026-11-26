@@ -561,6 +561,95 @@ class SleepyScheduler : public NrMacSchedulerOfdmaPF
 
 NS_OBJECT_ENSURE_REGISTERED(SleepyScheduler);
 
+/// Outer loop link adaptation, not in 5G-LENA: a per-UE MCS backoff learnt from the HARQ feedback
+/// of first transmissions. NACK: +step; ACK: -step * target / (1 - target). The backoff settles where
+/// the first-transmission BLER equals the target; it may go negative (MCS above the CQI choice).
+struct OllaConfig
+{
+    double step{0}; // MCS steps per NACK, 0: off
+    double target{0.1};
+};
+
+static OllaConfig g_olla;
+
+template <class Base>
+class Olla : public Base
+{
+  public:
+    void DoSchedDlCqiInfoReq(
+        const NrMacSchedSapProvider::SchedDlCqiInfoReqParameters& params) override
+    {
+        Base::DoSchedDlCqiInfoReq(params); // sets the MCS of each UE from its CQI
+        const int maxMcs = static_cast<int>(this->GetDlAmc()->GetMaxMcs());
+        for (const auto& c : params.m_cqiList)
+        {
+            auto ue = m_ues[c.m_rnti].lock();
+            if (ue)
+            {
+                const int mcs = ue->m_dlMcs - static_cast<int>(std::lround(m_backoff[c.m_rnti]));
+                ue->m_dlMcs = static_cast<uint8_t>(std::clamp(mcs, 0, maxMcs));
+            }
+        }
+    }
+
+    void DoSchedDlTriggerReq(
+        const NrMacSchedSapProvider::SchedDlTriggerReqParameters& params) override
+    {
+        for (const auto& h : params.m_dlHarqInfoList)
+        {
+            if (h.m_numRetx == 0) // redundancy version 0: a first transmission
+            {
+                auto& b = m_backoff[h.m_rnti];
+                b += h.IsReceivedOk() ? -g_olla.step * g_olla.target / (1 - g_olla.target)
+                                      : g_olla.step;
+                b = std::clamp(b, -MAX_BACKOFF, MAX_BACKOFF);
+            }
+        }
+        Base::DoSchedDlTriggerReq(params);
+    }
+
+  protected:
+    std::shared_ptr<NrMacSchedulerUeInfo> CreateUeRepresentation(
+        const NrMacCschedSapProvider::CschedUeConfigReqParameters& params) const override
+    {
+        auto ue = Base::CreateUeRepresentation(params);
+        m_ues[params.m_rnti] = ue;
+        return ue;
+    }
+
+  private:
+    static constexpr double MAX_BACKOFF = 15; // MCS steps
+    mutable std::map<uint16_t, std::weak_ptr<NrMacSchedulerUeInfo>> m_ues;
+    std::map<uint16_t, double> m_backoff; // MCS steps, per UE
+};
+
+class OllaOfdma : public Olla<NrMacSchedulerOfdmaPF>
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::OllaOfdma")
+                                .SetParent<NrMacSchedulerOfdmaPF>()
+                                .AddConstructor<OllaOfdma>();
+        return tid;
+    }
+};
+
+class OllaTdma : public Olla<NrMacSchedulerTdmaPF>
+{
+  public:
+    static TypeId GetTypeId()
+    {
+        static TypeId tid = TypeId("ns3::OllaTdma")
+                                .SetParent<NrMacSchedulerTdmaPF>()
+                                .AddConstructor<OllaTdma>();
+        return tid;
+    }
+};
+
+NS_OBJECT_ENSURE_REGISTERED(OllaOfdma);
+NS_OBJECT_ENSURE_REGISTERED(OllaTdma);
+
 int
 main(int argc, char* argv[])
 {
@@ -618,6 +707,10 @@ main(int argc, char* argv[])
     cmd.AddValue("sleepTwMs", "Wake-up time of the sleep mode of cell 0 [ms], 0: off", sleepTwMs);
     cmd.AddValue("sleepSsbMs", "SSB period [ms], 0: none", sleepSsbMs);
     cmd.AddValue("sleepTimerTw", "Idle time before sleeping [Tw]", sleepTimerTw);
+    cmd.AddValue("ollaStep",
+                 "Outer loop link adaptation: MCS steps added per NACK, all sites, 0: off",
+                 g_olla.step);
+    cmd.AddValue("ollaTarget", "Outer loop link adaptation: target first-transmission BLER", g_olla.target);
     cmd.AddValue("scheduler", "ofdma or tdma (proportional fair)", scheduler);
     cmd.AddValue("tbTrace", "Write every transport block received in cell 0", tbTrace);
     cmd.AddValue("neighborScheduler",
@@ -648,6 +741,10 @@ main(int argc, char* argv[])
     // SleepyScheduler extends the OFDMA scheduler: it would silently replace TDMA in cell 0.
     NS_ABORT_MSG_IF((scheduler == "tdma" || neighborScheduler == "tdma") && sleepTwMs > 0,
                     "the sleep mode is implemented and verified only with the ofdma scheduler");
+    NS_ABORT_MSG_IF(g_olla.step > 0 && sleepTwMs > 0,
+                    "outer loop link adaptation is not combined with the sleep mode");
+    NS_ABORT_MSG_IF(g_olla.step < 0 || g_olla.target <= 0 || g_olla.target >= 1,
+                    "ollaStep >= 0 and 0 < ollaTarget < 1");
     // Video rates [Mbit/s] of the first UEs of each site (720p, 1080p, 4K in Uitto et al.).
     std::vector<double> video;
     if (profile == "night")
@@ -810,9 +907,10 @@ main(int argc, char* argv[])
     {
         setGnbArray(g == 0 ? antennas : neighborAntennas);
         nr->SetSchedulerTypeId(TypeId::LookupByName(
-            g == 0 && g_sleep                                    ? "ns3::SleepyScheduler"
-            : (g == 0 ? scheduler : neighborScheduler) == "tdma" ? "ns3::NrMacSchedulerTdmaPF"
-                                                                 : "ns3::NrMacSchedulerOfdmaPF"));
+            g == 0 && g_sleep ? "ns3::SleepyScheduler"
+            : (g == 0 ? scheduler : neighborScheduler) == "tdma"
+                ? (g_olla.step > 0 ? "ns3::OllaTdma" : "ns3::NrMacSchedulerTdmaPF")
+                : (g_olla.step > 0 ? "ns3::OllaOfdma" : "ns3::NrMacSchedulerOfdmaPF")));
         gnbDev.Add(nr->InstallGnbDevice(NodeContainer(gnbs.Get(g)), bwps));
     }
     auto ueDev = nr->InstallUeDevice(ues, bwps);

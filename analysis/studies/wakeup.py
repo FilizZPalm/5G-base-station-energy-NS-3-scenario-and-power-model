@@ -33,9 +33,11 @@ def trace(profile, chains, seed):
 
 
 def run(dl, work, tw, ssb, timer):
-    """tw, ssb and timer in slots. Returns the fraction of time asleep and the delay of each unit [ms]."""
+    """tw, ssb and timer in slots. Returns the fraction of time asleep, the delay of each unit [ms], the units
+    left unserved, the fraction of time not awake (asleep or in transition) and the number of sleeps."""
     AWAKE, DOWN, SLEEP, UP = range(4)
     state, left, idle, asleep, queue, delays = AWAKE, 0, 0, 0, [], []
+    off, sleeps = 0, 0
     head = 0
     for t in range(N):
         if work[t]:
@@ -57,14 +59,16 @@ def run(dl, work, tw, ssb, timer):
                 idle += 1
                 if idle > timer and to_ssb > 2 * tw + 1:
                     state, left = DOWN, tw
+                    sleeps += 1
         elif state == SLEEP:
             asleep += 1
+        off += state != AWAKE
         if state in (DOWN, UP):
             left -= 1
             if left <= 0:
                 state = SLEEP if state == DOWN else AWAKE
                 idle = 0
-    return asleep / N, np.array(delays) * SLOT_MS, len(queue) - head
+    return asleep / N, np.array(delays) * SLOT_MS, len(queue) - head, off / N, sleeps
 
 
 def idle_watt(chains):

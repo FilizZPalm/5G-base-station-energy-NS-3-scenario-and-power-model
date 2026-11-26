@@ -1,10 +1,12 @@
 """Wake-up campaign (bs-results-wake): sleep simulated in NS-3, paired by seed with the main campaign.
 
 Power: symbol shutdown as in campaign.py, minus the sleep time in the 'RF off' state (wakeup.py)."""
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from lib import campaign as c, ns3data, paths, power as pw
 from studies.daily import HOURS, energy, half_ci
+from lib.style import AQUA, BLUE, INK, ORANGE, PROFILES, save
 from studies.wakeup import CASES, idle_watt
 
 RAW = paths.RAW / "bs-results-wake"
@@ -69,3 +71,21 @@ if __name__ == "__main__":
         e = sum(h * lv[p] for p, h in HOURS.items()) / 1000
         print(f"{name}: {e.mean():.2f} kWh, vs always on {(100 * (1 - e / ref)).mean():.1f} +/- "
               f"{half_ci(100 * (1 - e / ref)):.1f} %, vs symbol + channel {(100 * (1 - e / best)).mean():.1f} %")
+
+    # Figure: extra saving over symbol + channel, simulated in NS-3
+    fig, ax = plt.subplots(figsize=(8, 4.2))
+    cols = {("0.5", 20): (BLUE, "Tw 0.5 ms, SSB every 20 ms"), ("5", 20): (ORANGE, "Tw 5 ms, SSB every 20 ms"),
+            ("5", 160): (AQUA, "Tw 5 ms, SSB every 160 ms")}
+    for k, ((tw, ssb), (color, lab)) in enumerate(cols.items()):
+        q = r[(r.tw == tw) & (r.ssb == ssb)].set_index("profile")
+        xs = [i + (k - 1) * .27 for i, p in enumerate(PROFILES) if p in q.index]
+        ps = [p for p in PROFILES if p in q.index]
+        ax.bar(xs, q.extra_pct[ps], .25, color=color, label=lab, yerr=q.extra_ci[ps],
+               error_kw=dict(ecolor=INK, lw=1, capsize=2))
+        for x, p in zip(xs, ps):
+            ax.text(x, q.extra_pct[p] + q.extra_ci[p] + .4, f"{q.extra_pct[p]:.1f}%", ha="center", fontsize=8, color=INK)
+    ax.set(xticks=range(3), xticklabels=[f"{PROFILES[p]}, {CASES[p]} chains" for p in PROFILES], ylim=(0, 21),
+           ylabel="extra saving over symbol + channel [%]", title="Sleep with a wake-up time, simulated in NS-3")
+    ax.grid(axis="x", visible=False)
+    ax.legend(frameon=False)
+    save(fig, "wakeup_ns3.png", "RF off state, idle timer 2 Tw; 5 ms not simulated at peak. 10 seeds; bars: 95% CI")

@@ -2,7 +2,9 @@
 import numpy as np
 import pandas as pd
 from lib import campaign as c, ns3data, paths, power as pw
+from lib.style import BLUE, CHAINS, INK, ORANGE, save
 from studies.daily import HOURS, half_ci
+import matplotlib.pyplot as plt
 
 RAW = {"ofdma": c.RAW, "tdma": paths.RAW / "bs-results-tdma"}
 runs, users, segs = [], [], []
@@ -81,3 +83,22 @@ if __name__ == "__main__":
               f"TDMA {x.tdma.quantile([.5, .9]).round(1).tolist()}")
     print(runs[runs.profile == "peak100"].assign(l=lambda x: 100 * x.loss).pivot(
         index=["chains", "sch"], columns="seed", values="l").round(2).to_string())
+
+    # Figure: peak, OFDMA against TDMA: power with symbol shutdown and burst users over the limit
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4.2))
+    pk = r[r.profile == "peak100"]
+    for k, (sch, color) in enumerate((("ofdma", BLUE), ("tdma", ORANGE))):
+        q = pk[pk.sch == sch].set_index("chains").loc[list(CHAINS)]
+        x = [i + (k - .5) * .4 for i in range(3)]
+        a1.bar(x, q.watt_sym, .36, color=color, label=sch.upper())
+        a2.bar(x, q.over, .36, color=color, label=sch.upper())
+        for xi, wv, o in zip(x, q.watt_sym, q.over):
+            a1.text(xi, wv + 10, f"{wv:.0f}", ha="center", fontsize=8, color=INK)
+            a2.text(xi, o + .5, f"{o}", ha="center", fontsize=8, color=INK)
+    a1.set(ylabel="AAU power with symbol shutdown [W]", ylim=(0, 800), title="Peak: power")
+    a2.set(ylabel=f"burst users with p95 over {c.LIMIT_MS} ms (of 70)", ylim=(0, 40), title="Peak: QoS")
+    for ax in (a1, a2):
+        ax.set(xticks=range(3), xticklabels=CHAINS, xlabel="active chains")
+        ax.grid(axis="x", visible=False)
+    a1.legend(frameon=False, loc="upper right")
+    save(fig, "tdma.png", "Same scheduler in all three sites. 10 seeds, paired")

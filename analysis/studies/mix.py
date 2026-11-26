@@ -5,7 +5,9 @@ cell-0 effect = mean over neighbour schedulers of (TDMA - OFDMA in cell 0), and 
 import numpy as np
 import pandas as pd
 from lib import campaign as c, ns3data, paths, power as pw
+from lib.style import BLUE, CHAINS, INK, ORANGE, save
 from studies.daily import half_ci
+import matplotlib.pyplot as plt
 
 RAW = paths.RAW / "bs-results-mix"
 SCH = ("ofdma", "tdma")
@@ -55,3 +57,23 @@ if __name__ == "__main__":
                  "interaction": v("tdma", "tdma", k) - v("tdma", "ofdma", k) - v("ofdma", "tdma", k) + v("ofdma", "ofdma", k)}
             eff.append(dict(chains=a, metric=k, **{n: f"{e[n].mean():+.2f} +- {half_ci(e[n]):.2f}" for n in e}))
     print(pd.DataFrame(eff).to_string(index=False))
+
+    # Figure: first-transmission errors and in-block SINR spread; colour = cell 0, hatching = neighbours with TDMA
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.4))
+    combos = [(c0, nb) for c0 in SCH for nb in SCH]
+    for ax, (k, lab, top) in zip(axes, (("bler", "blocks in error at first transmission [%]", 30),
+                                        ("spread", "SINR in the block: mean - worst RB [dB]", 13))):
+        for j, (c0, nb) in enumerate(combos):
+            x = [i + (j - 1.5) * .2 for i in range(3)]
+            y = [out.loc[(a, c0, nb), k] for a in CHAINS]
+            ax.bar(x, y, .18, color=BLUE if c0 == "ofdma" else ORANGE, hatch="///" if nb == "tdma" else None,
+                   edgecolor="white", lw=0, label=f"cell 0 {c0.upper()}, neighbours {nb.upper()}")
+            for xi, yi in zip(x, y):
+                ax.text(xi, yi + top / 80, f"{yi:.0f}" if k == "bler" else f"{yi:.1f}", ha="center", fontsize=7,
+                        color=INK)
+        ax.set(xticks=range(3), xticklabels=CHAINS, xlabel="active chains in cell 0", ylabel=lab, ylim=(0, top))
+        ax.grid(axis="x", visible=False)
+    axes[0].set_title("Peak: errors")
+    axes[1].set_title("Peak: interference uneven in frequency")
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower right", ncol=2, frameon=False, fontsize=8)
+    save(fig, "mix.png", "10 seeds, paired. Hatched: neighbour sites with TDMA")

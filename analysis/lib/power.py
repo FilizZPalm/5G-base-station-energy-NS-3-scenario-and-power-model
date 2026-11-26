@@ -46,3 +46,28 @@ def bjornson(load, rate_gbps, m=64, k=10, b=60e6, ptx_w=PTX_MAX * P_PEAK_W):
             + b / u * (k**3 / (3 * l_bs) + (3 * m * k**2 + m * k) / l_bs))
     return (np.asarray(load, float) * ptx_w / 0.39 + 18.0 + p_tc + p_ce + p_lp
             + np.asarray(rate_gbps, float) * (0.1 + 0.25))
+
+
+# 3GPP TR 38.864 V18.1.0 (2023), clause 5.1, BS power model for network energy saving studies.
+# Relative power (deep sleep = 1), reference configuration Set 1: TDD FR1, 100 MHz, 30 kHz, 64 TX RUs, 55 dBm.
+# Tables 5.1-3 (power), 5.1-4 (total transition time, down + up, ms), 5.1-5 (extra transition energy,
+# relative power x ms). The TR gives two alternative sets of values, Category 1 and 2, without naming them.
+TGPP = {1: dict(deep=1, light=25, micro=55, dl=280, ul=110, t_light=6, t_deep=50, e_light=90, e_deep=1000),
+        2: dict(deep=1, light=2.1, micro=5.5, dl=32, ul=6.5, t_light=640, t_deep=10000, e_light=1088, e_deep=17000)}
+TGPP_A = 0.4          # share of the dynamic DL power that scales with the active RUs (baseline)
+TGPP_RB_REF = 273     # RBs of the 100 MHz reference carrier at 30 kHz
+TGPP_EXTRA_CC = 0.7   # each additional contiguous carrier
+
+
+def tgpp_dl_symbol(rb, active_ru=1.0, cat=1):
+    """Power of one DL symbol of one carrier with rb resource blocks in use (eta = 1, same PSD as the
+    reference): P3 + sa * A * (P4 - P3) + sf * (1 - A) * (P4 - P3)."""
+    p = TGPP[cat]
+    dyn = p["dl"] - p["micro"]
+    return p["micro"] + active_ru * TGPP_A * dyn + np.asarray(rb, float) / TGPP_RB_REF * (1 - TGPP_A) * dyn
+
+
+def tgpp_ul_symbol(active_ru=1.0, cat=1):
+    """Power of one UL symbol of one carrier (baseline: P3 + sa * (P5 - P3))."""
+    p = TGPP[cat]
+    return p["micro"] + active_ru * (p["ul"] - p["micro"])

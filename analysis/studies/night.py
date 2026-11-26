@@ -2,9 +2,11 @@
 
 EARTH (Auer et al. 2011, Fig. 4) has a daily minimum of active users at 14 % of the maximum; our night is at 1 % of the
 peak traffic. The quantities differ, so these nights are a sensitivity check, not a calibration."""
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from lib import campaign as c, ns3data, paths, power as pw
+from lib.style import BLUE, INK, ORANGE, save
 from studies.daily import HOURS, energy, half_ci
 from studies.wakeup import idle_watt
 
@@ -80,3 +82,18 @@ if __name__ == "__main__":
         sl = (8 * s[(s.night == n) & (s.tw == "0.5")].sort_values("seed").watt.to_numpy() + rest(16, 64, "watt_sym")) / 1e3
         print(f"  {n}: always on {on.mean():.2f}, symbol + channel {best.mean():.2f} (-{(100 * (1 - best / on)).mean():.1f} %), "
               f"+ 0.5 ms sleep at night {sl.mean():.2f} (-{(100 * (1 - sl / on)).mean():.1f} +/- {half_ci(100 * (1 - sl / on)):.1f} %)")
+
+    # Figure: extra saving of the sleep modes as the night gets busier
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    mbps = list(NIGHTS.values())
+    for (tw, ssb), color, m, dy in zip(SETTINGS, (BLUE, ORANGE), ("o", "s"), (9, -16)):
+        q = w[(w.tw == tw) & (w.ssb == ssb)].set_index("night").loc[list(NIGHTS)]
+        ax.errorbar(mbps, q.extra, q.extra_ci, color=color, marker=m, ms=8, lw=2, capsize=2,
+                    label=f"Tw {tw} ms, SSB every {ssb} ms")
+        for x, y, a in zip(mbps, q.extra, q.asleep):
+            ax.annotate(f"asleep {a:.0f}%", (x, y), xytext=(0, dy), textcoords="offset points", ha="center",
+                        fontsize=8, color=INK)
+    ax.set(xticks=mbps, xlabel="night traffic [Mbit/s], 2 users", ylabel="extra saving over symbol + channel [%]",
+           ylim=(0, 22), title="Busier nights: what sleep still saves (16 chains)")
+    ax.legend(frameon=False, loc="lower left")
+    save(fig, "night_load.png", "RF off state, simulated in NS-3. 10 seeds; bars: 95% CI")
