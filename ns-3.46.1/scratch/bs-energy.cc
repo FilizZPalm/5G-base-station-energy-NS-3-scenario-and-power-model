@@ -17,6 +17,7 @@
 #include "ns3/spectrum-module.h"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <functional>
 
@@ -44,6 +45,85 @@ SlotData(uint32_t carrier,
     }
     g_slots << sfn.Normalize() << ',' << carrier << ',' << ues << ',' << usedReg << ',' << usedSym
             << ',' << availRb << ',' << availSym << '\n';
+}
+
+/// Downlink occupancy of a site (both carriers), sums over the DL slots.
+struct CellLoad
+{
+    uint64_t slots{0}, usedReg{0}, availReg{0}, usedSym{0}, availSym{0};
+};
+
+static std::vector<CellLoad> g_cells;
+
+static void
+CellData(uint32_t cell,
+         const SfnSf&,
+         uint32_t,
+         uint32_t usedReg,
+         uint32_t usedSym,
+         uint32_t availRb,
+         uint32_t availSym,
+         uint16_t,
+         uint16_t)
+{
+    if (Simulator::Now() < g_warmup)
+    {
+        return;
+    }
+    auto& c = g_cells[cell];
+    c.slots++;
+    c.usedReg += usedReg;
+    c.availReg += availRb * availSym;
+    c.usedSym += usedSym;
+    c.availSym += availSym;
+}
+
+/// Radio quality of the transport blocks received by a UE; sums weighted by resources (RB x symbols).
+struct RxStats
+{
+    uint64_t tbs{0}, retx{0}, corrupt{0}, okBytes{0};
+    double res{0}, sinrDb{0}, mcs{0}, rank{0}, syms{0}, tbler{0};
+    std::array<uint64_t, 2> last{UINT64_MAX, UINT64_MAX}; // per carrier
+};
+
+static std::map<uint32_t, RxStats> g_rx;
+static std::ofstream g_tb; // one line per transport block, only with --tbTrace
+
+static void
+RxTb(uint32_t ue, uint32_t carrier, RxPacketTraceParams p)
+{
+    if (Simulator::Now() < g_warmup)
+    {
+        return;
+    }
+    auto& s = g_rx[ue];
+    // The trace fires once per packet of the block: count each block once.
+    const uint64_t id = ((uint64_t(p.m_frameNum) * 10 + p.m_subframeNum) * 16 + p.m_slotNum) * 16 +
+                        p.m_symStart;
+    if (s.last[carrier] == id)
+    {
+        return;
+    }
+    s.last[carrier] = id;
+    const double w = double(p.m_rbAssignedNum) * p.m_numSym;
+    s.tbs++;
+    s.retx += p.m_rv > 0;
+    s.corrupt += p.m_corrupt;
+    s.okBytes += p.m_corrupt ? 0 : p.m_tbSize;
+    s.res += w;
+    s.sinrDb += w * 10 * log10(p.m_sinr);
+    s.mcs += w * p.m_mcs;
+    s.rank += w * p.m_rank;
+    s.syms += p.m_numSym;
+    s.tbler += p.m_tbler;
+    if (g_tb.is_open())
+    {
+        g_tb << (id >> 4) << ',' << ue << ',' << carrier << ',' << +p.m_symStart << ','
+             << +p.m_numSym << ',' << p.m_rbAssignedNum << ',' << p.m_tbSize << ',' << +p.m_mcs
+             << ',' << +p.m_rank << ',' << +p.m_rv << ',' << 10 * log10(p.m_sinr) << ','
+             << 10 * log10(p.m_sinrMin) << ',' << p.m_tbler << ',' << p.m_corrupt << ','
+             << +p.m_cqi << '\n';
+    }
 }
 
 /// Poisson arrivals of fixed-size bursts; each burst is sent as back-to-back packets.
@@ -502,6 +582,8 @@ main(int argc, char* argv[])
     double drain = 0.05;
     std::string association = "best";
     std::string scheduler = "ofdma"; // PF in both cases
+    std::string neighborScheduler; // empty: as scheduler
+    bool tbTrace = false;
     double sleepTwMs = 0;    // wake-up (and fall-asleep) time of the sleep mode, 0: no sleep
     double sleepSsbMs = 20;  // SSB period, 0: no SSB
     double sleepTimerTw = 2; // idle time before sleeping, in units of Tw
@@ -536,7 +618,11 @@ main(int argc, char* argv[])
     cmd.AddValue("sleepTwMs", "Wake-up time of the sleep mode of cell 0 [ms], 0: off", sleepTwMs);
     cmd.AddValue("sleepSsbMs", "SSB period [ms], 0: none", sleepSsbMs);
     cmd.AddValue("sleepTimerTw", "Idle time before sleeping [Tw]", sleepTimerTw);
-    cmd.AddValue("scheduler", "ofdma or tdma (proportional fair), all sites", scheduler);
+    cmd.AddValue("scheduler", "ofdma or tdma (proportional fair)", scheduler);
+    cmd.AddValue("tbTrace", "Write every transport block received in cell 0", tbTrace);
+    cmd.AddValue("neighborScheduler",
+                 "ofdma or tdma in the other sites, empty: as scheduler",
+                 neighborScheduler);
     cmd.AddValue("drain", "Extra time after the last transmission [s]", drain);
     cmd.AddValue("warmup", "Discarded initial time [s]", warmup);
     cmd.AddValue("duration", "Measured time [s]", duration);
@@ -553,7 +639,15 @@ main(int argc, char* argv[])
                     "association: best or geometric");
     const bool best = association == "best";
     NS_ABORT_MSG_IF(scheduler != "ofdma" && scheduler != "tdma", "scheduler: ofdma or tdma");
-    NS_ABORT_MSG_IF(scheduler == "tdma" && sleepTwMs > 0, "the sleep mode needs the ofdma scheduler");
+    if (neighborScheduler.empty())
+    {
+        neighborScheduler = scheduler;
+    }
+    NS_ABORT_MSG_IF(neighborScheduler != "ofdma" && neighborScheduler != "tdma",
+                    "neighborScheduler: ofdma or tdma");
+    // SleepyScheduler extends the OFDMA scheduler: it would silently replace TDMA in cell 0.
+    NS_ABORT_MSG_IF((scheduler == "tdma" || neighborScheduler == "tdma") && sleepTwMs > 0,
+                    "the sleep mode is implemented and verified only with the ofdma scheduler");
     // Video rates [Mbit/s] of the first UEs of each site (720p, 1080p, 4K in Uitto et al.).
     std::vector<double> video;
     if (profile == "night")
@@ -709,15 +803,16 @@ main(int argc, char* argv[])
         g_sleep->Start(g_warmup, stop);
     }
 
+    g_cells.resize(nGnb);
     // Site by site: only cell 0 changes its number of chains.
     NetDeviceContainer gnbDev;
     for (uint32_t g = 0; g < nGnb; ++g)
     {
         setGnbArray(g == 0 ? antennas : neighborAntennas);
         nr->SetSchedulerTypeId(TypeId::LookupByName(
-            g == 0 && g_sleep     ? "ns3::SleepyScheduler"
-            : scheduler == "tdma" ? "ns3::NrMacSchedulerTdmaPF"
-                                  : "ns3::NrMacSchedulerOfdmaPF"));
+            g == 0 && g_sleep                                    ? "ns3::SleepyScheduler"
+            : (g == 0 ? scheduler : neighborScheduler) == "tdma" ? "ns3::NrMacSchedulerTdmaPF"
+                                                                 : "ns3::NrMacSchedulerOfdmaPF"));
         gnbDev.Add(nr->InstallGnbDevice(NodeContainer(gnbs.Get(g)), bwps));
     }
     auto ueDev = nr->InstallUeDevice(ues, bwps);
@@ -736,10 +831,21 @@ main(int argc, char* argv[])
             phy->SetAttribute("Numerology", UintegerValue(1));
             phy->SetAttribute("TxPower", DoubleValue(perCarrierDbm));
             phy->SetAttribute("Pattern", StringValue("DL|DL|DL|S|UL|"));
+            phy->TraceConnectWithoutContext("SlotDataStats", MakeBoundCallback(&CellData, g));
             if (g == 0)
             {
                 phy->TraceConnectWithoutContext("SlotDataStats", MakeBoundCallback(&SlotData, c));
             }
+        }
+    }
+
+    for (uint32_t i = 0; i < uesPerGnb; ++i) // only UEs of cell 0
+    {
+        for (uint32_t c = 0; c < 2; ++c)
+        {
+            NrHelper::GetUePhy(ueDev.Get(i), c)
+                ->GetSpectrumPhy()
+                ->TraceConnectWithoutContext("RxPacketTraceUe", MakeBoundCallback(&RxTb, i, c));
         }
     }
 
@@ -816,6 +922,13 @@ main(int argc, char* argv[])
     NS_ABORT_MSG_IF(!g_slots.is_open(), "cannot open output");
     g_slots << "slot,carrier,ues,used_reg,used_sym,avail_rb,avail_sym\n";
 
+    if (tbTrace)
+    {
+        g_tb.open(out + "_tb.csv");
+        g_tb << "slot,ue,carrier,sym_start,syms,rbs,tb_bytes,mcs,rank,rv,sinr_db,sinr_min_db,tbler,"
+                "corrupt,cqi\n";
+    }
+
     FlowMonitorHelper fmh;
     NodeContainer ends(ues);
     ends.Add(remote);
@@ -851,6 +964,22 @@ main(int argc, char* argv[])
               << st.rxPackets << ',' << st.delaySum.GetSeconds() << ',' << p95 << ','
               << (i < video.size() ? "video" : "burst") << '\n';
         }
+    }
+    std::ofstream cl(out + "_cells.csv");
+    cl << "cell,slots,used_reg,avail_reg,used_sym,avail_sym\n";
+    for (uint32_t g = 0; g < nGnb; ++g)
+    {
+        const auto& c = g_cells[g];
+        cl << g << ',' << c.slots << ',' << c.usedReg << ',' << c.availReg << ',' << c.usedSym << ','
+           << c.availSym << '\n';
+    }
+    std::ofstream rx(out + "_rx.csv");
+    rx << "ue,tbs,retx,corrupt,ok_bytes,res,sinr_db_w,mcs_w,rank_w,sym_sum,tbler_sum\n";
+    for (const auto& [ue, s] : g_rx)
+    {
+        rx << ue << ',' << s.tbs << ',' << s.retx << ',' << s.corrupt << ',' << s.okBytes << ','
+           << s.res << ',' << s.sinrDb << ',' << s.mcs << ',' << s.rank << ',' << s.syms << ','
+           << s.tbler << '\n';
     }
     if (!segments.empty())
     {
