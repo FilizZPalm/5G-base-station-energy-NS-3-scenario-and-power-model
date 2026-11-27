@@ -3,7 +3,7 @@
 # Profiles: night, nightNN (NN Mbit/s), day, dayNN (NN Mbit/s), peakNNN (NNN Mbit/s offered: 53 of video, the rest bursts).
 # Resumable: finished runs are skipped. Runs go seed by seed, so partial results stay balanced.
 set -euo pipefail
-OUT=${OUT:-bs-results-seg}
+OUT=${OUT:-bs-results-main}
 JOBS=${JOBS:-6}
 SEEDS=${SEEDS:-10}
 DURATION=${DURATION:-10}

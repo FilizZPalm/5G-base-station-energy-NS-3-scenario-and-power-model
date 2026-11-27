@@ -221,7 +221,7 @@ def plot_day(load, chosen, limits):
         ax_load.text(0.2, limit + 1.5, f"{names} chains: QoS acceptable up to {limit} Mbit/s", fontsize=8, color=INK)
     ax_load.set(ylabel="offered load [Mbit/s]", ylim=(0, MAX_MBPS + 5), title="A day and the chains a reactive policy picks")
     ax_load.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 0.05), fontsize=8)
-    name = "reactive 15 min, margin 25%"
+    name = "reactive 5 min, margin 50%"    # the rule chosen in the README
     ax_chains.step(hour, chosen[name][2][0], where="post", color=ORANGE, lw=1.5, label=name)
     ax_chains.step(hour, choose(load[0], limits), where="post", color=MUTED, lw=1, ls="--", label="oracle")
     ax_chains.set(xlabel="hour of the day", ylabel="active chains", yticks=CHAINS, xlim=(0, 24), xticks=range(0, 25, 3))

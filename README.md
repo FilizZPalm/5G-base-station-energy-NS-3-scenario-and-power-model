@@ -78,8 +78,9 @@ losses stay under 1%.
 ([steps 2](docs/STEPS.md#2-main-campaign-power-and-qos) and [13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)).
 With 16 of 64 chains and symbol shutdown the power falls by about 32% at any load, but the QoS holds only up to
 50 Mbit/s when the neighbours carry the same load (20 with neighbours twice as loaded, 60 with half). 48 chains
-carry up to 100 Mbit/s, and above 120 the cell saturates even with 64. 32 chains are never worth it: they carry
-the same load as 24.
+carry up to 100 Mbit/s, and above 120 the cell saturates even with 64. 32 chains are rarely worth it: with
+neighbours at the same or half the load they carry the same as 24, and only with neighbours twice as loaded do they
+carry more (40 Mbit/s against 20).
 
 ![Highest load each number of chains carries with acceptable QoS](analysis/figures/final_capacity.png)
 
@@ -115,7 +116,9 @@ one-hour ramps and a random fluctuation). Script `studies.policy --final`.*
 
 **The power model matters as much as the technique** ([step 10](docs/STEPS.md#10-the-3gpp-power-model)). On the same
 traffic and with the same choices, symbol and channel shutdown save 29% with Piovesan and 49-51% with the 3GPP
-TR 38.864 model, and up to 60% with sleep at night. Symbol shutdown alone saves 19% with Piovesan and 39-44% with
+TR 38.864 model, and 57% with light sleep at night in Category 1, at no QoS cost. Deep sleep at night saves about as
+much (56%, 60% with no SSB at all) but pushes the night delays over 20 ms, as does light sleep in Category 2 (hatched
+bars). Symbol shutdown alone saves 19% with Piovesan and 39-44% with
 3GPP: in 3GPP an empty symbol costs 20% of full load, in Piovesan 47%. Fewer chains alone save 24% with Piovesan and
 38% with 3GPP. The 3GPP report does not say which of its two categories of values applies to real equipment. Two
 older models, EARTH and Björnson, can each express only one of the two techniques; they are compared in
@@ -124,8 +127,10 @@ older models, EARTH and Björnson, can each express only one of the two techniqu
 ![One day with Piovesan and the 3GPP model](analysis/figures/final_models.png)
 
 *Data: the same runs as the day above (final campaign at night and by day, 48 chains at peak), through each power
-model. Light and deep sleep at night: simulated in NS-3 for 3GPP Category 1 (`bs-results-wake3gpp`, neighbours at
-64 chains, which at 1 Mbit/s makes no difference), estimated on the traces for Category 2. Script `studies.final`.*
+model. Light and deep sleep at night: simulated in NS-3 for 3GPP Category 1 with an SSB every 160 ms
+(`bs-results-wake3gpp`, neighbours at 64 chains, which at 1 Mbit/s makes no difference), estimated on the traces
+without SSB and for Category 2. Hatched: the night QoS fails (NS-3: the criterion above; traces: p95 delay over
+20 ms). Script `studies.final`.*
 
 *Missing bars cannot be computed. Piovesan has no light or deep sleep state, only the sleep with a 0.5 ms wake-up of
 the day figure above. Category 2 of the 3GPP report takes 640 ms to go into light sleep and back, and 10 s for deep
@@ -158,7 +163,9 @@ recomputes steps 2, 3, 10 and 11 with every site deciding for itself.
 - Each run simulates 10 s of a traffic level, not hours. The traffic levels, the 8/12/4 h day, the 20 ms
   delay limit and the QoS criterion, and the video segments are assumptions.
 - With Piovesan, sleep times come from a survey and sleep powers from Piovesan. The 3GPP model gives both
-  from one source but leaves open which of its two categories applies.
+  from one source but leaves open which of its two categories applies. We use its scaling with the PA efficiency
+  factor η = 1 and the reference power density per chain; the report also allows η = 0.76 for narrow carriers like
+  ours, and our radiated power is about 0.55 of the reference density ([step 10](docs/STEPS.md#10-the-3gpp-power-model)).
 - The QoS criterion is relative to 64 chains, and from about 90 Mbit/s 64 chains degrade too (11% of the burst
   users over 20 ms at 90 Mbit/s, 22% at 120). "Acceptable" means "not much worse than 64 chains".
 - The final study uses burst users only. Its peak hours keep the earlier peak with video, with neighbours at 64

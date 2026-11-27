@@ -143,15 +143,19 @@ which equipment they stand for:
 While transmitting, the power of a symbol is
 
 $$
-P_{\mathrm{DL}} = P_{\mathrm{micro}} + s_a\,A\,(P_{\mathrm{DL,max}} - P_{\mathrm{micro}}) + s_f\,(1-A)\,(P_{\mathrm{DL,max}} - P_{\mathrm{micro}}),
+P_{\mathrm{DL}} = P_{\mathrm{micro}} + s_a\,A\,(P_{\mathrm{DL,max}} - P_{\mathrm{micro}}) + \frac{s_f\,s_p}{\eta}\,(1-A)\,(P_{\mathrm{DL,max}} - P_{\mathrm{micro}}),
 \qquad A = 0.4
 $$
 
-with $s_a$ the share of active chains and $s_f$ the share of the 100 MHz band in use. A second contiguous
+with $s_a$ the share of active chains, $s_f$ the share of the 100 MHz band in use, $s_p$ the power spectral
+density per chain against the reference and $\eta$ a factor for the PA efficiency. A second contiguous
 carrier costs 0.7 times the first, and each light or deep sleep adds a transition energy. `studies.threegpp`
 builds this power symbol by symbol from the same NS-3 traces. Empty symbols drop to micro sleep with symbol
 shutdown. Assumptions: the control symbol uses the whole carrier, UL symbols are always receiving, and
-the 0.7 factor also applies to sleep states.
+the 0.7 factor also applies to sleep states. $s_p = 1$, the reference density; scaled to our radiated power
+(104.9 W over 60 MHz, against 55 dBm over 100 MHz) it would be about 0.55. $\eta = 1$, the single value the
+report allows for any $s_f$ and $s_p$; it also allows 0.76 when $s_f s_p < 0.5$, which with our 30 MHz carriers
+is always the case. Both are declared in `lib/power.py` (`TGPP_SP`, `TGPP_ETA`).
 
 ![One day with Piovesan and the 3GPP model](../analysis/figures/threegpp.png)
 
@@ -262,7 +266,8 @@ eight loads were simulated, so those limits are lower bounds.
   instead of 40, and 24 or 32 up to 60 instead of 50: lightly loaded neighbours use fewer chains and interfere less.
 - **The neighbours' load matters as much as one's own.** With neighbours twice as loaded, 16 chains carry only
   20 Mbit/s; with neighbours half as loaded, 48 chains carry 150.
-- **32 chains are never worth it**: they carry the same load as 24 for 2-3 points less saving.
+- **32 chains are rarely worth it**: with neighbours at the same or half the load they carry the same load as 24
+  for 2-3 points less saving; only with neighbours twice as loaded do they carry more (40 Mbit/s against 20).
 - **Above 120 Mbit/s the cell is saturated**: even 64 chains lose over 1% of the packets.
 - **More seeds settle the 48-chain limit.** With 20 seeds the 95% CI of the extra users over 20 ms at 48 chains,
   80-110 Mbit/s, is 2.7-4.6 points: +3.0 ± 3.4 at 100 Mbit/s (acceptable), +8.5 at 110 (not). The 16-chain limit at

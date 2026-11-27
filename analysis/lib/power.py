@@ -95,17 +95,24 @@ TGPP = {1: dict(deep=1, light=25, micro=55, dl=280, ul=110, t_light=6, t_deep=50
 TGPP_A = 0.4          # share of the dynamic downlink power that scales with the active RUs
 TGPP_RB_REF = 273     # resource blocks of the 100 MHz reference carrier at 30 kHz
 TGPP_EXTRA_CC = 0.7   # each additional contiguous carrier costs 0.7 of the first
+# ASSUMPTIONS of the downlink scaling (clause 5.1): sf = resource blocks in use / 273 (per symbol), and
+TGPP_SP = 1.0         # sp: power spectral density per RU against the reference. 1 = as Set 1; scaled to our AAU
+                      # (104.9 W over 60 MHz against 55 dBm over 100 MHz, 64 RUs in both) it would be about 0.55.
+TGPP_ETA = 1.0        # eta: PA efficiency factor. The report lets each study use one value (eta = 1 for any sf, sp)
+                      # or two (eta = 0.76 when sf * sp < 0.5, else 1). With 30 MHz carriers sf * sp is always below
+                      # 0.5, so the two-value choice would raise the load-dependent PA power by 1 / 0.76.
 
 
 def tgpp_dl_symbol(rb, active_ru=1.0, cat=1):
     """Power of one downlink symbol of one carrier with rb resource blocks in use.
 
-    P = micro + active_ru * A * (dl - micro) + rb / 273 * (1 - A) * (dl - micro):
+    P = micro + active_ru * A * (dl - micro) + rb / 273 * sp / eta * (1 - A) * (dl - micro):
     part of the power grows with the active radio units, part with the resource blocks in use.
     """
     p = TGPP[cat]
     dyn = p["dl"] - p["micro"]
-    return p["micro"] + active_ru * TGPP_A * dyn + np.asarray(rb, float) / TGPP_RB_REF * (1 - TGPP_A) * dyn
+    load = np.asarray(rb, float) / TGPP_RB_REF * TGPP_SP / TGPP_ETA      # sf * sp / eta
+    return p["micro"] + active_ru * TGPP_A * dyn + load * (1 - TGPP_A) * dyn
 
 
 def tgpp_ul_symbol(active_ru=1.0, cat=1):

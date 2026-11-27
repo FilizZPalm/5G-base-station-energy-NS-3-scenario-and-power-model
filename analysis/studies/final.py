@@ -23,7 +23,7 @@ import pandas as pd
 from lib import campaign, ns3data, paths, power
 from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, save
 from studies.daily import half_ci
-from studies.threegpp import ns3_sleeps, sleep_level, slot_power, symbol_table, trace_sleeps
+from studies.threegpp import night_sleep_qos_ok, ns3_sleeps, sleep_level, slot_power, symbol_table, trace_sleeps
 
 RAW = paths.RAW / "bs-results-indep"
 FACTORS = {"x0.5": 0.5, "x1": 1, "x2": 2}          # folder -> neighbour load / load of cell 0
@@ -200,7 +200,8 @@ def day_3gpp():
     """3GPP Category 1 and 2, one day on the final configuration: symbol, symbol + channel (48 chains at peak) and
     light or deep sleep at night on top (NS-3 where simulated, else the trace estimate, from studies.threegpp: their
     nights have neighbours at 64 chains, which at 1 Mbit/s makes no difference; the returned check is the largest
-    difference between the earlier and the final night with 16 chains)."""
+    difference between the earlier and the final night with 16 chains). qos_ok: the settings without sleep are those
+    with acceptable QoS at every level; a sleep is judged on the night by studies.threegpp.night_sleep_qos_ok."""
     traced, simulated, earlier = trace_sleeps(), ns3_sleeps(), symbol_table()
     rows = []
     for cat in (1, 2):
@@ -212,14 +213,17 @@ def day_3gpp():
                     "channel": {"night": tgpp_level("night", 16, False, cat), "day": tgpp_level("day", 16, False, cat),
                                 "peak": tgpp_level("peak", 48, False, cat)},
                     "symbol + channel": best}
+        qos_ok = dict.fromkeys(policies, True)
         for name, ssb in (("+ light sleep at night", "SSB 160 ms"), ("+ light sleep at night", "no SSB"),
                           ("+ deep sleep at night", "SSB 160 ms"), ("+ deep sleep at night", "no SSB")):
-            night = sleep_level(cat, "night", name.split()[1], ssb, traced, simulated)
+            state = name.split()[1]                             # "light" or "deep"
+            night = sleep_level(cat, "night", state, ssb, traced, simulated)
             if len(night):
                 policies[f"{name} ({ssb})"] = dict(best, night=night)
+                qos_ok[f"{name} ({ssb})"] = night_sleep_qos_ok(cat, state, ssb, traced, simulated)
         for name, levels in policies.items():
             saving = 100 * (1 - sum(h * levels[level] for level, h in HOURS.items()) / always_on)
-            rows.append(dict(cat=cat, policy=name, saving=saving.mean(), ci=half_ci(saving)))
+            rows.append(dict(cat=cat, policy=name, saving=saving.mean(), ci=half_ci(saving), qos_ok=qos_ok[name]))
     night_earlier = earlier[(earlier.cat == 1) & (earlier.profile == "night") & (earlier.chains == 16)
                             & earlier.symbol].sort_values("seed").rel.to_numpy()
     check = np.abs(night_earlier - tgpp_level("night", 16, True, 1)).max()
@@ -296,10 +300,11 @@ def day_models(days_3gpp):
         energy = sum(h * piovesan_watts(level, CHAINS_BY_LEVEL[level] if "channel" in policy else 64, "symbol" in policy)
                      for level, h in HOURS.items())
         saving = 100 * (1 - energy / always_on)
-        rows.append(dict(model="Piovesan", policy=policy, saving=saving.mean(), ci=half_ci(saving)))
+        rows.append(dict(model="Piovesan", policy=policy, saving=saving.mean(), ci=half_ci(saving), qos_ok=True))
     names = {1: "3GPP Category 1", 2: "3GPP Category 2"}
     for _, row in days_3gpp[days_3gpp.policy != "always on"].iterrows():
-        rows.append(dict(model=names[row["cat"]], policy=row["policy"], saving=row["saving"], ci=row["ci"]))
+        rows.append(dict(model=names[row["cat"]], policy=row["policy"], saving=row["saving"], ci=row["ci"],
+                         qos_ok=row["qos_ok"]))
     return pd.DataFrame(rows)
 
 
@@ -307,16 +312,22 @@ MODEL_STYLE = {"Piovesan": BLUE, "3GPP Category 1": ORANGE, "3GPP Category 2": A
 
 
 def plot_models(models):
-    """Saving of one day, Piovesan and 3GPP, one group of bars per policy; no bar: the model cannot express it."""
+    """Saving of one day, Piovesan and 3GPP, one group of bars per policy; no bar: the model cannot express it;
+    hatched: the night QoS is not acceptable."""
     policies = list(dict.fromkeys(models.policy))
     order = ["symbol", "channel", "symbol + channel"] + [p for p in policies if p.startswith("+")]
     fig, ax = plt.subplots(figsize=(9, 5.4))
     y = np.arange(len(order))
     width = .27
     for k, (model, color) in enumerate(MODEL_STYLE.items()):
-        values = [models[(models.model == model) & (models.policy == p)].saving.mean() for p in order]
+        rows = [models[(models.model == model) & (models.policy == p)] for p in order]
+        values = [row.saving.mean() for row in rows]
         offset = y + (k - 1) * width
-        ax.barh(offset, values, width * .92, color=color, label=model)
+        bars = ax.barh(offset, values, width * .92, color=color, label=model)
+        for bar, row in zip(bars, rows):
+            if len(row) and not row.qos_ok.all():
+                bar.set_hatch("///")
+                bar.set_edgecolor("white")
         for yi, v in zip(offset, values):
             if np.isfinite(v):
                 ax.text(v + .5, yi, f"{v:.0f}%", va="center", fontsize=8, color=INK)
@@ -324,10 +335,13 @@ def plot_models(models):
            title="Same NS-3 traffic, three power models")
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
-    ax.legend(frameon=False, loc="lower right")
+    handles, labels = ax.get_legend_handles_labels()
+    handles.append(plt.Rectangle((0, 0), 1, 1, facecolor=MUTED, hatch="///", edgecolor="white"))
+    labels.append("QoS not acceptable at night")
+    ax.legend(handles, labels, frameon=False, loc="upper right")
     save(fig, "final_models.png", "Hours 8/12/4, final configuration (16 chains at night and by day, 48 at peak). "
-                                  "Sleep at night: NS-3 where simulated, else trace estimate.\n"
-                                  "No bar: not possible (see the README). 10 seeds")
+                                  "Sleep at night: NS-3 where simulated, else trace estimate\n"
+                                  "(QoS: p95 delay within 20 ms). No bar: not possible (see the README). 10 seeds")
 
 
 def plot_day(day, days_3gpp):

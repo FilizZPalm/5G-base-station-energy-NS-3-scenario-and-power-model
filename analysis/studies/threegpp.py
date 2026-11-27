@@ -164,6 +164,24 @@ def sleep_level(cat, profile, state, ssb, traced, simulated):
     return np.array([])
 
 
+def night_sleep_qos_ok(cat, state, ssb, traced, simulated):
+    """Whether the night QoS holds with this sleep, from the same source as sleep_level. NS-3: the criterion of
+    lib.campaign against the night without sleep (burst users over the limit, losses). Traces, which have no users:
+    the p95 delay of the served work within the limit (mean over seeds). None if neither source has it."""
+    if len(simulated):
+        rows = simulated[(simulated.cat == cat) & (simulated.profile == "night") & (simulated.state == state)
+                         & (simulated.ssb == ssb)]
+        if len(rows) == campaign.SEEDS:
+            burst = campaign.burst
+            no_sleep = burst[(burst.profile == "night") & (burst.chains == CASES["night"])]
+            extra = rows.over.sum() / rows.users.sum() - (no_sleep.p95_ms > campaign.LIMIT_MS).mean()
+            return bool(extra <= campaign.MAX_EXTRA_USERS and rows.loss.mean() < 100 * campaign.MAX_LOSS)
+    rows = traced[(traced.cat == cat) & (traced.profile == "night") & (traced.state == state) & (traced.ssb == ssb)]
+    if len(rows) == campaign.SEEDS:
+        return bool(rows.p95.mean() <= campaign.LIMIT_MS)
+    return None
+
+
 def daily_savings(table, traced, simulated):
     """Saving of one day (8/12/4 h) per category and policy, against 64 chains always on, mean and 95% CI."""
     def level(cat, profile, chains, symbol):
