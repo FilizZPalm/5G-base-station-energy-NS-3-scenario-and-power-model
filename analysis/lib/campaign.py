@@ -36,6 +36,15 @@ MAX_LOSS = 0.01          # ... no extra late video segment, and losses under 1%
 # ------------------------------------------------------------------------------------------------------------------
 
 T975 = 2.262             # Student t quantile for a 95% interval with 10 seeds (9 degrees of freedom)
+# The same quantile for every sample size the studies use: 10 seeds, 20 seeds (final study), 300 days (policy).
+T975_BY_DF = {9: 2.262, 19: 2.093, 299: 1.968}   # degrees of freedom (n - 1) -> 97.5% quantile
+
+
+def t975(n):
+    """97.5% Student t quantile for a sample of n values (n - 1 degrees of freedom)."""
+    if n - 1 not in T975_BY_DF:
+        raise ValueError(f"no Student t quantile for {n} values: add n - 1 = {n - 1} to T975_BY_DF")
+    return T975_BY_DF[n - 1]
 
 
 def load_run(profile, chains, seed):

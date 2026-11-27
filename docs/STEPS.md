@@ -265,7 +265,7 @@ eight loads were simulated, so those limits are lower bounds.
 - **32 chains are never worth it**: they carry the same load as 24 for 2-3 points less saving.
 - **Above 120 Mbit/s the cell is saturated**: even 64 chains lose over 1% of the packets.
 - **More seeds settle the 48-chain limit.** With 20 seeds the 95% CI of the extra users over 20 ms at 48 chains,
-  80-110 Mbit/s, is 3-5 points: +3.0 ± 3.7 at 100 Mbit/s (acceptable), +8.5 at 110 (not). The 16-chain limit at
+  80-110 Mbit/s, is 2.7-4.6 points: +3.0 ± 3.4 at 100 Mbit/s (acceptable), +8.5 at 110 (not). The 16-chain limit at
   50 Mbit/s is exactly on the criterion (+5.0 ± 7.7 points, 10 seeds) and could be 40 with other seeds.
 - **The rule is consistent with what it produces.** The neighbours used the step 11 rule, which is more cautious
   than the limits measured here, so between 40 and 60 Mbit/s they kept more chains than needed. Fewer chains in the

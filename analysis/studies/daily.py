@@ -42,8 +42,8 @@ SEEDS = range(1, campaign.SEEDS + 1)
 
 
 def half_ci(values):
-    """Half width of the 95% confidence interval of the mean (Student t for 10 seeds)."""
-    return np.std(values, ddof=1) * campaign.T975 / np.sqrt(len(values))
+    """Half width of the 95% confidence interval of the mean (Student t for the number of values)."""
+    return np.std(values, ddof=1) * campaign.t975(len(values)) / np.sqrt(len(values))
 
 
 @cache
