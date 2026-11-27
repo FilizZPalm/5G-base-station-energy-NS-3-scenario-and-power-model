@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from lib import campaign, ns3data, paths, power
+from lib import campaign, ns3data, paths
 from lib.style import BLUE, CHAINS, INK, ORANGE, save
 from studies.daily import HOURS, half_ci
 
@@ -36,9 +36,9 @@ def load():
                     slots = pd.read_csv(raw / f"{name}_slots.csv")
                     busy = slots[slots.slot < last_slot].groupby("slot").used_sym.max()
                     runs.append(dict(**key,
-                                     watt=float(power.piovesan(metrics["prb_load"], chains)) * campaign.W,
+                                     watt=campaign.watt(metrics, chains, symbol=False),
                                      used_sym=busy[busy > 0].mean(),      # data symbols in a slot that has data
-                                     watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
+                                     watt_sym=campaign.watt(metrics, chains),
                                      **metrics))
                     users.append(pd.read_csv(raw / f"{name}_flows.csv").assign(**key))
                     segments_file = raw / f"{name}_segments.csv"
@@ -66,7 +66,8 @@ if __name__ == "__main__":
     for profile in HOURS:
         for chains in CHAIN_COUNTS:
             # the comparison is paired only if both schedulers were offered the same traffic
-            assert np.allclose(per_seed("ofdma", profile, chains, "sent"), per_seed("tdma", profile, chains, "sent")), (profile, chains)
+            offered = [per_seed(scheduler, profile, chains, "sent") for scheduler in RAW]
+            assert np.allclose(*offered), (profile, chains)
             for scheduler in RAW:
                 def this(table):
                     return table[(table.sch == scheduler) & (table.profile == profile) & (table.chains == chains)]
@@ -111,11 +112,12 @@ if __name__ == "__main__":
         users = both.loc[chains]
         over_o, over_t = users.ofdma > campaign.LIMIT_MS, users.tdma > campaign.LIMIT_MS
         better = over_o.groupby("seed").sum() - over_t.groupby("seed").sum()      # > 0: TDMA has fewer users over
+        q_ofdma, q_tdma = (users[s].quantile([.5, .9]).round(1).tolist() for s in ("ofdma", "tdma"))
         print(f"  {chains}: both {(over_o & over_t).sum()}, only OFDMA {(over_o & ~over_t).sum()}, "
               f"only TDMA {(~over_o & over_t).sum()}, of {len(users)}; users with "
               f"lower p95 under TDMA {(users.tdma < users.ofdma).sum()}, higher {(users.tdma > users.ofdma).sum()}; "
               f"seeds better/worse {(better > 0).sum()}/{(better < 0).sum()}; quantiles 50/90 OFDMA "
-              f"{users.ofdma.quantile([.5, .9]).round(1).tolist()} TDMA {users.tdma.quantile([.5, .9]).round(1).tolist()}")
+              f"{q_ofdma} TDMA {q_tdma}")
     print(runs[runs.profile == "peak100"].assign(l=lambda x: 100 * x.loss).pivot(
         index=["chains", "sch"], columns="seed", values="l").round(2).to_string())
 

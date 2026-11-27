@@ -657,7 +657,7 @@ main(int argc, char* argv[])
     double loadMbps = -1;    // offered DL burst load per cell, <0: profile default
     double neighborLoadMbps = -1; // offered DL burst load of each other site, <0: as cell 0
     int activeUes = -1;      // UEs with traffic per site, <0: profile default
-    uint32_t antennas = 64;  // active RF chains: 64, 32 or 16 (channel shutdown)
+    uint32_t antennas = 64;  // active RF chains: 64, 48, 32, 24 or 16 (channel shutdown)
     uint32_t neighborAntennas = 64; // chains of the other sites
     bool suMimo = true;             // 2 streams per UE over dual-polarized arrays, same element count
     uint32_t nGnb = 3;

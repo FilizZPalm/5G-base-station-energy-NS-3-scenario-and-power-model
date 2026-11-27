@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 
 WARMUP = 0.3      # s, not measured
-DURATION = 1.5    # s, default measured window (the campaigns pass 10 s)
 SLOT = 0.5e-3     # s, one slot at 30 kHz subcarrier spacing (numerology 1)
 
 # A power amplifier needs time to switch off and on again: 71 us in total (sleep mode 1), i.e. two symbols at
@@ -21,8 +20,8 @@ SLOT = 0.5e-3     # s, one slot at 30 kHz subcarrier spacing (numerology 1)
 TRANSITION_SYM = 2
 
 
-def summary(slots_file, flows_file, duration=DURATION):
-    """All the metrics of one run, as a dict:
+def summary(slots_file, flows_file, duration):
+    """All the metrics of one run, as a dict. duration: the measured window of the run [s] (10 in the campaigns).
 
     prb_load       share of the downlink resources (resource blocks x symbols) that carried data, both carriers
     pa_off         share of the downlink symbols in which the power amplifiers can sleep (symbol shutdown)

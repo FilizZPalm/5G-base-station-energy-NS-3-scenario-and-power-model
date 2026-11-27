@@ -35,8 +35,8 @@ MAX_EXTRA_USERS = 0.05   # acceptable: at most 5 more burst users in 100 over th
 MAX_LOSS = 0.01          # ... no extra late video segment, and losses under 1%
 # ------------------------------------------------------------------------------------------------------------------
 
-T975 = 2.262             # Student t quantile for a 95% interval with 10 seeds (9 degrees of freedom)
-# The same quantile for every sample size the studies use: 10 seeds, 20 seeds (final study), 300 days (policy).
+# Student t quantile for a 95% interval, for every sample size the studies use: 10 seeds, 20 seeds (final study),
+# 300 days (policy).
 T975_BY_DF = {9: 2.262, 19: 2.093, 299: 1.968}   # degrees of freedom (n - 1) -> 97.5% quantile
 
 
@@ -45,6 +45,12 @@ def t975(n):
     if n - 1 not in T975_BY_DF:
         raise ValueError(f"no Student t quantile for {n} values: add n - 1 = {n - 1} to T975_BY_DF")
     return T975_BY_DF[n - 1]
+
+
+def watt(metrics, chains, symbol=True):
+    """Piovesan power of a run [W] from its ns3data metrics, with symbol shutdown (PAs off in empty symbols) or
+    without. Every study turns runs into watts with this."""
+    return float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"] if symbol else 0.0)) * W
 
 
 def whole_segments(segments):
@@ -62,8 +68,8 @@ def load_run(profile, chains, seed):
     key = dict(profile=profile, chains=chains, seed=seed)
     metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", DURATION)
     row = dict(**key,
-               watt=float(power.piovesan(metrics["prb_load"], chains)) * W,                         # no shutdown
-               watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * W,  # symbol shutdown
+               watt=watt(metrics, chains, symbol=False),      # no shutdown
+               watt_sym=watt(metrics, chains),                # symbol shutdown
                **metrics)
     users = pd.read_csv(f"{prefix}_flows.csv").assign(**key)
     segments_file = prefix.with_name(prefix.name + "_segments.csv")
@@ -115,7 +121,7 @@ def table(runs, burst, whole):
     key = ["profile", "chains"]
     by_level = runs.groupby(key)
     cols = ["watt", "watt_sym", "save", "save_sym", "prb_load", "pa_off", "sent", "thr", "loss_pct"]
-    mean, ci = by_level[cols].mean(), by_level[cols].std() * T975 / np.sqrt(SEEDS)
+    mean, ci = by_level[cols].mean(), by_level[cols].std() * t975(SEEDS) / np.sqrt(SEEDS)
     out = mean.join(ci.add_suffix("_ci"))
 
     p95 = burst.groupby(key).p95_ms
@@ -132,7 +138,8 @@ def table(runs, burst, whole):
 
     # QoS relative to 64 chains: same users, so a user with a poor radio link counts the same in both
     share_over = out.users_over / out.users
-    out["extra_users_pct"] = 100 * (share_over - share_over.xs(64, level="chains").reindex(share_over.index, level="profile"))
+    share_with_64 = share_over.xs(64, level="chains").reindex(share_over.index, level="profile")
+    out["extra_users_pct"] = 100 * (share_over - share_with_64)
     late = out.segments_late.fillna(0)
     out["extra_late"] = late - late.xs(64, level="chains").reindex(late.index, level="profile")
     out["qos_ok"] = ((out.extra_users_pct <= 100 * MAX_EXTRA_USERS) & (out.extra_late <= 0)

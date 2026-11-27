@@ -12,7 +12,7 @@ Run from analysis/:  ../.venv/bin/python -m studies.allsites
 """
 import pandas as pd
 
-from lib import campaign, ns3data, paths, power
+from lib import campaign, ns3data, paths
 from studies.daily import half_ci
 
 ALLSITES = paths.RAW / "bs-results-allsites"
@@ -30,7 +30,7 @@ def run(raw, profile, chains, seed):
     late = 0
     if profile == "peak100":
         late = int(campaign.whole_segments(pd.read_csv(f"{prefix}_segments.csv")).late.sum())
-    out = dict(watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
+    out = dict(watt_sym=campaign.watt(metrics, chains),
                prb=100 * metrics["prb_load"], over=int((burst.delay_p95_s * 1e3 > campaign.LIMIT_MS).sum()),
                users=len(burst), late=late, loss=100 * metrics["loss"])
     rx_file = prefix.with_name(prefix.name + "_rx.csv")
@@ -51,8 +51,9 @@ def load():
     for profile in PROFILES:
         for seed in range(1, campaign.SEEDS + 1):
             always_on_prefix = campaign.RAW / f"{profile}_a64_r{seed}"
-            always_on = float(power.piovesan(ns3data.summary(f"{always_on_prefix}_slots.csv", f"{always_on_prefix}_flows.csv",
-                                                             campaign.DURATION)["prb_load"], 64)) * campaign.W
+            metrics = ns3data.summary(f"{always_on_prefix}_slots.csv", f"{always_on_prefix}_flows.csv",
+                                      campaign.DURATION)
+            always_on = campaign.watt(metrics, 64, symbol=False)
             for chains in CHAINS:
                 for neighbours, raw in (("64", campaign.RAW), ("same", ALLSITES)):
                     result = run(raw, profile, chains, seed)
@@ -76,7 +77,8 @@ def table(runs):
                       bler=("bler", "mean"))
     out["saving_ci"] = grouped.saving.apply(half_ci)
     reference = out.xs("64 (ref)", level="neighbours").droplevel("chains")
-    out["extra_pct"] = 100 * (out.over / out.users) - 100 * (reference.over / reference.users).reindex(out.index, level="profile").to_numpy()
+    reference_share = (reference.over / reference.users).reindex(out.index, level="profile").to_numpy()
+    out["extra_pct"] = 100 * (out.over / out.users) - 100 * reference_share
     out["extra_late"] = out.late - reference.late.reindex(out.index, level="profile").to_numpy()
     out["qos_ok"] = ((out.extra_pct <= 100 * campaign.MAX_EXTRA_USERS) & (out.extra_late <= 0)
                      & (out.loss < 100 * campaign.MAX_LOSS))

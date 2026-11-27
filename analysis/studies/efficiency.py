@@ -12,13 +12,9 @@ import pandas as pd
 
 from lib import campaign, paths
 from lib.style import BLUE, CHAINS, INK, MUTED, ORANGE, PROFILES, save
-from studies.daily import HOURS, POLICIES, energy, half_ci
+from studies.daily import HOURS, POLICIES, energy, half_ci, runs_by_key
 
 SEEDS = range(1, campaign.SEEDS + 1)
-
-
-def runs_by_key():
-    return campaign.runs.set_index(["profile", "chains", "seed"]).sort_index()
 
 
 def kbit_per_joule(runs, profile, chains, symbol):
@@ -57,7 +53,8 @@ def plot(table):
     box = plt.Rectangle
     fig.legend([box((0, 0), 1, 1, color=BLUE), box((0, 0), 1, 1, color=ORANGE),
                 box((0, 0), 1, 1, facecolor=MUTED, hatch="///", edgecolor="white")],
-               ["without symbol", "with symbol", "QoS not acceptable"], loc="lower right", ncol=3, frameon=False, fontsize=9)
+               ["without symbol", "with symbol", "QoS not acceptable"], loc="lower right", ncol=3, frameon=False,
+               fontsize=9)
     save(fig, "efficiency.png", "10 seeds, 10 s; y scales differ; bars: 95% CI")
 
 
@@ -73,8 +70,9 @@ if __name__ == "__main__":
             for symbol in (0, 1):
                 v = kbit_per_joule(runs, profile, chains, symbol)
                 gain = 100 * (v / reference - 1)    # paired by seed
-                rows.append(dict(profile=profile, chains=chains, symbol=bool(symbol), kbit_J=v.mean(), kbit_J_ci=half_ci(v),
-                                 gain_pct=gain.mean(), gain_ci=half_ci(gain), qos_ok=bool(qos_ok[(profile, chains)])))
+                rows.append(dict(profile=profile, chains=chains, symbol=bool(symbol), kbit_J=v.mean(),
+                                 kbit_J_ci=half_ci(v), gain_pct=gain.mean(), gain_ci=half_ci(gain),
+                                 qos_ok=bool(qos_ok[(profile, chains)])))
     table = pd.DataFrame(rows)
     table.to_csv(paths.RESULTS / "efficiency.csv", index=False)
     pd.set_option("display.width", 200)

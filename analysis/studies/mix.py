@@ -14,7 +14,7 @@ Run from analysis/:  ../.venv/bin/python -m studies.mix
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from lib import campaign, ns3data, paths, power
+from lib import campaign, ns3data, paths
 from lib.style import BLUE, CHAINS, INK, ORANGE, save
 from studies.daily import half_ci
 
@@ -41,13 +41,13 @@ def load():
                     blocks = pd.read_csv(f"{prefix}_tb.csv")
                     first = blocks[blocks.rv == 0]              # first transmissions (redundancy version 0)
                     rows.append(dict(cell0=cell0, neigh=neighbours, chains=chains, seed=seed,
-                                     watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
+                                     watt_sym=campaign.watt(metrics, chains),
                                      pa_off=metrics["pa_off"], prb=metrics["prb_load"], delay_ms=1e3 * metrics["delay"],
                                      over=int((p95_ms > campaign.LIMIT_MS).sum()), late=int(late_segments(prefix)),
                                      loss=100 * metrics["loss"],
-                                     retx=100 * (blocks.rv > 0).mean(),                     # blocks that are retransmissions
-                                     bler=100 * first.corrupt.mean(),                       # errors at first transmission
-                                     spread=(first.sinr_db - first.sinr_min_db).mean(),     # SINR in a block: mean - worst RB
+                                     retx=100 * (blocks.rv > 0).mean(),                  # retransmitted blocks
+                                     bler=100 * first.corrupt.mean(),                    # errors at 1st transmission
+                                     spread=(first.sinr_db - first.sinr_min_db).mean(),  # SINR: mean - worst RB
                                      rbs=first.rbs.mean(), syms=first.syms.mean()))
     return pd.DataFrame(rows)
 

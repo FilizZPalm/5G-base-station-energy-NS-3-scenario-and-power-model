@@ -1,7 +1,8 @@
 """Sleep with a wake-up time, simulated in NS-3 (step 6 of docs/STEPS.md; campaign bs-results-wake).
 
 Same chains and seeds as the main campaign, with the sleep controller of bs-energy.cc on: the AAU sleeps between
-bursts and needs Tw to go down and Tw to come back. Three settings: (Tw, SSB period) = (0.5 ms, 20 ms), (5, 20), (5, 160).
+bursts and needs Tw to go down and Tw to come back. Three settings, (Tw, SSB period) = (0.5 ms, 20 ms), (5, 20) and
+(5, 160).
 
 Power of a run: Piovesan with symbol shutdown, as in lib.campaign, minus the time asleep at the "RF off" power
 instead of the idle awake power (studies.wakeup.idle_watt). Each run is paired with the same seed without sleep.
@@ -38,8 +39,7 @@ def load(main):
                     continue                                    # 5 ms not simulated at peak
                 metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
                 asleep, states = share_asleep(f"{prefix}_sleep.csv")
-                watt = (float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W
-                        - asleep * (idle_watt(chains) - power.CARRIER_OFF * campaign.W))
+                watt = campaign.watt(metrics, chains) - asleep * (idle_watt(chains) - power.CARRIER_OFF * campaign.W)
                 key = dict(profile=profile, tw=tw, ssb=ssb, seed=seed)
                 rows.append(dict(**key, asleep=100 * asleep, watt=watt,
                                  ref=main.loc[(profile, chains, seed), "watt_sym"],     # same seed, no sleep

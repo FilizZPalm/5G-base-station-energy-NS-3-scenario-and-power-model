@@ -8,21 +8,22 @@ script checks three things:
   - video:  every complete video segment arrives in time (99% of its packets within 2 s);
   - bursts: no burst user has a 95th-percentile delay above 20 ms.
 
-A load is a good peak level if most seeds pass all three. Run from analysis/:  ../.venv/bin/python -m studies.load_search
+A load is a good peak level if most seeds pass all three.
+Run from analysis/:  ../.venv/bin/python -m studies.load_search
 """
 import pandas as pd
 
-from lib import campaign, ns3data, paths, power
+from lib import campaign, ns3data, paths
 
 RAW_FOLDER = paths.RAW / "bs-results-load"
 LOADS_MBPS = (80, 100, 120)
-SEEDS = range(1, 11)
-SIMULATED_SECONDS = 10
+SEEDS = range(1, campaign.SEEDS + 1)
+SIMULATED_SECONDS = campaign.DURATION
 CHAINS = 64
 
-# ASSUMPTIONS: the QoS limits (the same as in lib/campaign.py)
-DELAY_LIMIT_MS = 20      # a burst user is "over the limit" if its p95 delay is above this
-MAX_LOSS = 0.01           # at most 1% of the packets lost
+# The QoS limits of lib.campaign (ASSUMPTIONS)
+DELAY_LIMIT_MS = campaign.LIMIT_MS   # a burst user is "over the limit" if its p95 delay is above this
+MAX_LOSS = campaign.MAX_LOSS         # at most 1% of the packets lost
 
 
 def late_segments(segments):
@@ -55,8 +56,8 @@ def analyse_run(load, seed):
     prb = prb_load_per_carrier(f"{prefix}_slots.csv")
 
     # Piovesan model, in watt: without and with symbol shutdown (PAs off in empty symbols)
-    watt = float(power.piovesan(metrics["prb_load"], CHAINS)) * power.P_PEAK_W
-    watt_symbol = float(power.piovesan(metrics["prb_load"], CHAINS, metrics["pa_off"])) * power.P_PEAK_W
+    watt = campaign.watt(metrics, CHAINS, symbol=False)
+    watt_symbol = campaign.watt(metrics, CHAINS)
 
     row = dict(
         load=load,

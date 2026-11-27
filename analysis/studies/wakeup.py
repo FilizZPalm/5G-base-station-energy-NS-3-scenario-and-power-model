@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from lib import campaign, ns3data, paths, power
-from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, save
+from lib.style import AQUA, BLUE, INK, ORANGE, save
 
 SLOT_MS = ns3data.SLOT * 1e3                                 # 0.5 ms
 FIRST = round(ns3data.WARMUP / ns3data.SLOT)                # first measured slot (600)
@@ -141,14 +141,16 @@ if __name__ == "__main__":
                     for depth, sleep_power in DEPTH.items():
                         # while asleep the AAU draws the sleep power instead of the idle awake power
                         watt = without_sleep - asleep * (idle_watt(chains) - sleep_power * campaign.W)
-                        rows.append(dict(profile=profile, chains=chains, tw_ms=tw_ms, ssb_ms=ssb_ms or 0, timer=timer_name,
-                                         depth=depth, asleep_pct=100 * asleep.mean(), watt=watt.mean(),
+                        rows.append(dict(profile=profile, chains=chains, tw_ms=tw_ms, ssb_ms=ssb_ms or 0,
+                                         timer=timer_name, depth=depth, asleep_pct=100 * asleep.mean(),
+                                         watt=watt.mean(),
                                          extra_saving_pct=100 * (1 - watt.mean() / without_sleep.mean()),
                                          delay_mean=delays.mean(), delay_p95=np.percentile(delays, 95),
                                          delay_max=delays.max(), unserved=unserved))
     table = pd.DataFrame(rows)
     table.to_csv(paths.RESULTS / "wakeup.csv", index=False)
     pd.set_option("display.width", 220, "display.max_rows", 200)
-    print({k: round(idle_watt(a), 1) for k, a in CASES.items()}, {k: round(v * campaign.W, 1) for k, v in DEPTH.items()})
+    print({k: round(idle_watt(a), 1) for k, a in CASES.items()},
+          {k: round(v * campaign.W, 1) for k, v in DEPTH.items()})
     print(table[(table.depth == "RF off")].round(2).drop(columns="depth").to_string(index=False))
     plot(table)

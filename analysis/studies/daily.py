@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from lib import campaign, paths, power
-from lib.style import BLUE, INK, MUTED, ORANGE, OUT
+from lib.style import BLUE, INK, ORANGE, save
 
 # ASSUMPTIONS ------------------------------------------------------------------------------------------------------
 HOURS = {"night": 8, "day": 12, "peak100": 4}
@@ -48,8 +48,9 @@ def half_ci(values):
 
 @cache
 def runs_by_key():
-    """The main campaign runs, looked up by (level, chains, seed)."""
-    return campaign.runs.set_index(["profile", "chains", "seed"])
+    """The main campaign runs, looked up by (level, chains, seed). Also used by studies.efficiency and
+    studies.models."""
+    return campaign.runs.set_index(["profile", "chains", "seed"]).sort_index()
 
 
 def level_power(policy, level):
@@ -89,9 +90,7 @@ def plot(table, names=None, formula_only=NIGHT_STATES, filename="daily_power.png
     ax.set(xlabel="AAU energy per day [kWh]", xlim=(0, 22),
            title=f"Energy of one day ({'/'.join(map(str, HOURS.values()))} h night/day/peak, assumed)")
     ax.grid(axis="y", visible=False)
-    fig.tight_layout(rect=(0, .06, 1, 1))
-    fig.text(.01, .01, note, fontsize=8, color=MUTED)
-    fig.savefig(OUT / filename, dpi=200, facecolor="white")
+    save(fig, filename, note)
 
 
 if __name__ == "__main__":
@@ -100,8 +99,8 @@ if __name__ == "__main__":
     for n in NAMES:
         e = energy(n, HOURS)
         saving = 100 * (1 - e / reference)   # paired by seed
-        rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=saving.mean(), saving_ci=half_ci(saving),
-                         **{f"W_{level}": level_power(n, level).mean() for level in HOURS}))
+        rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=saving.mean(),
+                         saving_ci=half_ci(saving), **{f"W_{level}": level_power(n, level).mean() for level in HOURS}))
     table = pd.DataFrame(rows).set_index("policy")
     table.to_csv(paths.RESULTS / "daily.csv")
     pd.set_option("display.width", 200, "display.max_columns", 20)

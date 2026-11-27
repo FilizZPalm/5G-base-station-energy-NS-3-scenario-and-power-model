@@ -115,8 +115,8 @@ def trace_sleeps():
                         asleep, delays, _, off, n_sleeps = run(*traces[seed], tw, round(ssb / SLOT_MS), 2 * tw)
                         base, idle = with_symbol.loc[(cat, profile, chains, seed), ["rel", "idle"]]
                         rows.append(dict(cat=cat, profile=profile, chains=chains, state=state, ssb=name, seed=seed,
-                                         off=100 * off, rel=sleep_power(base, idle, off, n_sleeps, state, cat), base=base,
-                                         on=always_on[(cat, profile, seed)],
+                                         off=100 * off, rel=sleep_power(base, idle, off, n_sleeps, state, cat),
+                                         base=base, on=always_on[(cat, profile, seed)],
                                          p95=np.percentile(delays, 95) if len(delays) else 0))
     table = pd.DataFrame(rows)
     table["extra"] = 100 * (1 - table.rel / table.base)
@@ -158,7 +158,8 @@ def sleep_level(cat, profile, state, ssb, traced, simulated):
     trace estimate; empty if neither (the sleep does not fit between two SSBs). Also used by studies.final."""
     for source in (simulated, traced):
         if len(source):
-            rows = source[(source.cat == cat) & (source.profile == profile) & (source.state == state) & (source.ssb == ssb)]
+            rows = source[(source.cat == cat) & (source.profile == profile) & (source.state == state)
+                          & (source.ssb == ssb)]
             if len(rows) == campaign.SEEDS:
                 return rows.sort_values("seed").rel.to_numpy()
     return np.array([])
@@ -185,7 +186,8 @@ def night_sleep_qos_ok(cat, state, ssb, traced, simulated):
 def daily_savings(table, traced, simulated):
     """Saving of one day (8/12/4 h) per category and policy, against 64 chains always on, mean and 95% CI."""
     def level(cat, profile, chains, symbol):
-        rows = table[(table.cat == cat) & (table.profile == profile) & (table.chains == chains) & (table.symbol == symbol)]
+        rows = table[(table.cat == cat) & (table.profile == profile) & (table.chains == chains)
+                     & (table.symbol == symbol)]
         return rows.sort_values("seed").rel.to_numpy()
 
     out = []

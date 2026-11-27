@@ -86,5 +86,5 @@ cd analysis
 | `studies.threegpp` | 3GPP TR 38.864 power model, with its light and deep sleep | main and 3GPP sleep campaigns |
 | `studies.policy` | A rule that picks the chains from the measured load (`--peak`: 100 Mbit/s with video) | main and grid campaigns |
 | `studies.allsites` | All sites with the same chains as cell 0 | main, mix and all-sites campaigns |
-| `studies.final` | Final study: limits per chains and neighbour load, one day (Piovesan and 3GPP) | final, main, grid and 3GPP sleep campaigns |
+| `studies.final` | Final study: limits per chains and neighbour load, one day (Piovesan and 3GPP) | final, main, grid and 3GPP sleep campaigns; run `studies.policy` first (it prints its limits) |
 | `studies.policy --final` | The rule of step 11 on the final configuration (run `studies.final` first) | final campaign |

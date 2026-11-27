@@ -20,9 +20,11 @@ plt.rcParams.update({"font.size": 10, "axes.spines.top": False, "axes.spines.rig
                      "ytick.color": MUTED, "axes.grid": True, "grid.color": GRID, "axes.axisbelow": True})
 
 
-def save(fig, name, note=NOTE):
-    """Save fig as figures/<name> with a small note at the bottom left, and close it."""
-    fig.tight_layout(rect=(0, 0.06, 1, 1))   # leave the bottom 6% for the note
+def save(fig, name, note=NOTE, tight=True):
+    """Save fig as figures/<name> with a small note at the bottom left, and close it. tight=False: the figure sets its
+    own margins (tight_layout cannot place axes with a fixed aspect), keeping the bottom 6% free for the note."""
+    if tight:
+        fig.tight_layout(rect=(0, 0.06, 1, 1))   # leave the bottom 6% for the note
     fig.text(0.01, 0.01, note, fontsize=8, color=MUTED)
     fig.savefig(OUT / name, dpi=200, facecolor="white")
     plt.close(fig)

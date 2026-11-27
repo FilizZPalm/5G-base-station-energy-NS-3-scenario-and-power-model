@@ -43,8 +43,8 @@ def load():
                 metrics, p95 = read_run(folder / f"{night}_a{chains}_r{seed}")
                 runs.append(dict(night=night, chains=chains, seed=seed, p95=p95, thr=metrics["thr"],
                                  loss=100 * metrics["loss"], prb=metrics["prb_load"],
-                                 watt=float(power.piovesan(metrics["prb_load"], chains)) * campaign.W,
-                                 watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W))
+                                 watt=campaign.watt(metrics, chains, symbol=False),
+                                 watt_sym=campaign.watt(metrics, chains)))
         for tw, ssb in SETTINGS:
             for seed in SEEDS:
                 folder = WAKE_MAIN if night == "night" else WAKE
@@ -52,8 +52,7 @@ def load():
                 metrics, p95 = read_run(prefix)
                 states = pd.read_csv(f"{prefix}_sleep.csv").iloc[0]
                 asleep = states["sleep"] / states[["awake", "down", "sleep", "up"]].sum()
-                watt = (float(power.piovesan(metrics["prb_load"], 16, metrics["pa_off"])) * campaign.W
-                        - asleep * (idle_watt(16) - power.CARRIER_OFF * campaign.W))
+                watt = campaign.watt(metrics, 16) - asleep * (idle_watt(16) - power.CARRIER_OFF * campaign.W)
                 sleeps.append(dict(night=night, tw=tw, ssb=ssb, seed=seed, asleep=100 * asleep, p95=p95,
                                    violations=states.violations, watt=watt))
     return pd.DataFrame(runs), pd.DataFrame(sleeps)
@@ -84,8 +83,9 @@ def sleep_table(runs, sleeps):
         reference = no_sleep[night].loc[group.seed].to_numpy()
         extra = 100 * (1 - group.watt.to_numpy() / reference)
         over, worst = users_over(group)
-        out.append(dict(night=night, tw=tw, ssb=ssb, asleep=group.asleep.mean(), watt=group.watt.mean(), extra=extra.mean(),
-                        extra_ci=half_ci(extra), over20=over, max_p95=worst, violations=int(group.violations.sum())))
+        out.append(dict(night=night, tw=tw, ssb=ssb, asleep=group.asleep.mean(), watt=group.watt.mean(),
+                        extra=extra.mean(), extra_ci=half_ci(extra), over20=over, max_p95=worst,
+                        violations=int(group.violations.sum())))
     return pd.DataFrame(out)
 
 
@@ -109,9 +109,10 @@ def print_days(runs, sleeps):
         best = (8 * night_watt(16, "watt_sym") + day_and_peak(16, 64, "watt_sym")) / 1e3
         sleep_watt = sleeps[(sleeps.night == night) & (sleeps.tw == "0.5")].sort_values("seed").watt.to_numpy()
         with_sleep = (8 * sleep_watt + day_and_peak(16, 64, "watt_sym")) / 1e3
+        sleep_saving = 100 * (1 - with_sleep / always_on)
         print(f"  {night}: always on {always_on.mean():.2f}, symbol + channel {best.mean():.2f} "
               f"(-{(100 * (1 - best / always_on)).mean():.1f} %), + 0.5 ms sleep at night {with_sleep.mean():.2f} "
-              f"(-{(100 * (1 - with_sleep / always_on)).mean():.1f} +/- {half_ci(100 * (1 - with_sleep / always_on)):.1f} %)")
+              f"(-{sleep_saving.mean():.1f} +/- {half_ci(sleep_saving):.1f} %)")
 
 
 def plot(sleep_result):

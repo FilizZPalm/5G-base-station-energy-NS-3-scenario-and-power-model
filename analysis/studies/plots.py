@@ -18,7 +18,7 @@ def summary_tables():
     """Mean and 95% CI of the power per level and chains, and the share of burst users over the limit [%]."""
     by_level = campaign.runs.groupby(["profile", "chains"])
     mean = by_level[["watt", "watt_sym", "sent"]].mean()
-    ci = by_level[["watt", "watt_sym"]].std() * campaign.T975 / np.sqrt(campaign.SEEDS)
+    ci = by_level[["watt", "watt_sym"]].std() * campaign.t975(campaign.SEEDS) / np.sqrt(campaign.SEEDS)
     burst = campaign.burst
     over_pct = 100 * burst.assign(o=burst.p95_ms > campaign.LIMIT_MS).groupby(["profile", "chains"]).o.mean()
     return mean, ci, over_pct

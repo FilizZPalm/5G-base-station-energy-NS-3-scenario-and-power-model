@@ -13,7 +13,8 @@ USERS = {"user A": BLUE, "user B": ORANGE, "user C": AQUA}
 
 
 def slot(ax, title, cell):
-    """Draw one slot. cell(symbol, rb) -> colour of that cell, or None if it is empty. Symbol 0 is the control symbol."""
+    """Draw one slot. cell(symbol, rb) -> colour of that cell, or None if it is empty. Symbol 0 is the control
+    symbol."""
     for symbol in range(SYMBOLS):
         for rb in range(RBS):
             color = MUTED if symbol == 0 else cell(symbol, rb)
@@ -51,5 +52,5 @@ if __name__ == "__main__":
                bbox_to_anchor=(.5, .93))
     fig.suptitle("Same data for three users, two ways to fill a downlink slot", fontsize=11, color=INK, y=.99)
     fig.subplots_adjust(top=.72)
-    save(fig, "schedulers.png", "Sketch, not a simulated slot: a 30 MHz carrier has 80 resource blocks. Symbol 1 carries the "
-                                "control channel with either scheduler.")
+    save(fig, "schedulers.png", "Sketch, not a simulated slot: a 30 MHz carrier has 80 resource blocks. Symbol 1 "
+                                "carries the control channel with either scheduler.")

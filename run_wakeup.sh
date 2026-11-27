@@ -26,6 +26,7 @@ for run in $(seq "$SEEDS"); do while read -r c; do echo "$c $run"; done <<< "$CA
   case $0 in
     peak*) n=${0#peak}; p="--profile=peak --loadMbps=$((n - 53))";;
     night?*) p="--profile=night --loadMbps=${0#night}";;
+    day?*) p="--profile=day --loadMbps=${0#day}";;
   esac
   LD_LIBRARY_PATH=build-opt/lib build-opt/scratch/ns3.46.1-bs-energy-optimized $p \
     --antennas=$1 --run=$4 --sleepTwMs=$2 --sleepSsbMs=$3 --duration=$DURATION --drain=0.5 \

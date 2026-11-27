@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from lib import campaign, ns3data, paths, power
+from lib import campaign, ns3data, paths
 from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, save
 from studies.daily import half_ci
 
@@ -86,9 +86,9 @@ def curves():
                 if not prefix.with_name(prefix.name + "_flows.csv").exists():
                     continue
                 metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
-                rows.append(dict(load=load, chains=chains, seed=seed, loss=100 * metrics["loss"], late=late_segments(prefix),
-                                 piovesan=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
-                                 piovesan_on=float(power.piovesan(metrics["prb_load"], chains)) * campaign.W,
+                rows.append(dict(load=load, chains=chains, seed=seed, loss=100 * metrics["loss"],
+                                 late=late_segments(prefix), piovesan=campaign.watt(metrics, chains),
+                                 piovesan_on=campaign.watt(metrics, chains, symbol=False),
                                  tgpp=slot_power(prefix, chains, True, 1)[0].mean(),
                                  tgpp_on=slot_power(prefix, chains, False, 1)[0].mean()))
                 flows = pd.read_csv(f"{prefix}_flows.csv")
@@ -208,7 +208,8 @@ def results_table(load, chosen, table, limits):
 # --- Figures ------------------------------------------------------------------------------------------------------
 def plot_day(load, chosen, limits):
     """One simulated day: the load with the acceptable load of each number of chains, and the chains picked."""
-    fig, (ax_load, ax_chains) = plt.subplots(2, 1, figsize=(9, 5.4), sharex=True, gridspec_kw=dict(height_ratios=(2, 1)))
+    fig, (ax_load, ax_chains) = plt.subplots(2, 1, figsize=(9, 5.4), sharex=True,
+                                             gridspec_kw=dict(height_ratios=(2, 1)))
     hour = np.arange(STEPS) * STEP_MIN / 60
     ax_load.plot(hour, base_profile(), color=MUTED, lw=1.5, ls="--", label="mean profile (8/12/4 h)")
     ax_load.plot(hour, load[0], color=BLUE, lw=1.5, label="one simulated day")
@@ -217,14 +218,16 @@ def plot_day(load, chosen, limits):
         names = ", ".join(str(a) for a in CHAINS[::-1] if a in shown and limits[a] == limit)
         ax_load.axhline(limit, color=ORANGE, lw=1, ls=":")
         ax_load.text(0.2, limit + 1.5, f"{names} chains: QoS acceptable up to {limit} Mbit/s", fontsize=8, color=INK)
-    ax_load.set(ylabel="offered load [Mbit/s]", ylim=(0, MAX_MBPS + 5), title="A day and the chains a reactive policy picks")
+    ax_load.set(ylabel="offered load [Mbit/s]", ylim=(0, MAX_MBPS + 5),
+                title="A day and the chains a reactive policy picks")
     ax_load.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 0.05), fontsize=8)
     name = "reactive 5 min, margin 50%"    # the rule chosen in the README
     ax_chains.step(hour, chosen[name][2][0], where="post", color=ORANGE, lw=1.5, label=name)
     ax_chains.step(hour, choose(load[0], limits), where="post", color=MUTED, lw=1, ls="--", label="oracle")
     ax_chains.set(xlabel="hour of the day", ylabel="active chains", yticks=CHAINS, xlim=(0, 24), xticks=range(0, 25, 3))
     ax_chains.legend(frameon=False, loc="upper left", fontsize=8)
-    save(fig, f"policy_day{SUFFIX}.png", "Load: our 8/12/4 h levels, one-hour ramps, log-normal fluctuation every 5 min (assumed)")
+    save(fig, f"policy_day{SUFFIX}.png",
+         "Load: our 8/12/4 h levels, one-hour ramps, log-normal fluctuation every 5 min (assumed)")
 
 
 def plot_tradeoff(result, limits):
@@ -233,7 +236,8 @@ def plot_tradeoff(result, limits):
     for interval, color, marker in zip(INTERVALS_MIN, (BLUE, ORANGE, AQUA), ("o", "s", "^")):
         line = result[result.interval_min == interval].sort_values("margin")
         line = line[line.policy.str.startswith("reactive")]
-        ax.plot(line.violation_pct, line.saving, color=color, marker=marker, ms=7, lw=2, label=f"reactive, every {interval} min")
+        ax.plot(line.violation_pct, line.saving, color=color, marker=marker, ms=7, lw=2,
+                label=f"reactive, every {interval} min")
         for _, point in line.iterrows() if interval == 15 else ():
             ax.annotate(f"margin +{point.margin:.0%}", (point.violation_pct, point.saving), xytext=(8, -11),
                         textcoords="offset points", fontsize=7, color=INK)
@@ -241,14 +245,16 @@ def plot_tradeoff(result, limits):
     ax.axhline(no_decision, color=MUTED, lw=1, ls="--")
     ax.text(2, no_decision + .1, "64 chains + symbol, no decision", fontsize=8, color=INK)
     oracle = result[result.policy == "oracle"].iloc[0]
-    ax.plot(oracle.violation_pct, oracle.saving, marker="*", ms=14, color=INK, ls="none", label="oracle (knows the load)")
+    ax.plot(oracle.violation_pct, oracle.saving, marker="*", ms=14, color=INK, ls="none",
+            label="oracle (knows the load)")
     ax.set(xlabel="time with QoS not acceptable [%]", ylabel="saving against always on [%] (Piovesan)",
            title="What a policy that decides by itself keeps")
     ax.legend(frameon=False, loc="center right", fontsize=8)
-    saturation = (f"\nNot counted: {result.saturated_pct.iloc[0]:.1f}% of the time the load is above what even 64 chains "
-                  f"carry ({limits[64]} Mbit/s)") if FINAL else ""
-    save(fig, f"policy_tradeoff{SUFFIX}.png", f"{DAYS} simulated days. Margin on the measured load: 0, 25, 50, 100% from "
-                                              "right to left on every line (labelled on the 15 min one)" + saturation)
+    saturation = (f"\nNot counted: {result.saturated_pct.iloc[0]:.1f}% of the time the load is above what even "
+                  f"64 chains carry ({limits[64]} Mbit/s)") if FINAL else ""
+    save(fig, f"policy_tradeoff{SUFFIX}.png",
+         f"{DAYS} simulated days. Margin on the measured load: 0, 25, 50, 100% from right to left on every line "
+         "(labelled on the 15 min one)" + saturation)
 
 
 if __name__ == "__main__":
@@ -264,7 +270,8 @@ if __name__ == "__main__":
     result = results_table(load, chosen, table, limits)
     result.to_csv(paths.RESULTS / f"policy{SUFFIX}.csv", index=False)
     print(result.round(2).to_string(index=False))
-    print(f"mean load {load.mean():.1f} Mbit/s; hours above 80 Mbit/s per day {(load > 80).sum(1).mean() * STEP_MIN / 60:.2f}")
+    hours_above_80 = (load > 80).sum(1).mean() * STEP_MIN / 60
+    print(f"mean load {load.mean():.1f} Mbit/s; hours above 80 Mbit/s per day {hours_above_80:.2f}")
 
     plot_day(load, chosen, limits)
     plot_tradeoff(result, limits)

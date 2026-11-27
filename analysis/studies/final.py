@@ -9,7 +9,7 @@ Outputs:
   - per neighbour load, load and chains: power, saving, SINR, errors and QoS relative to 64 chains on the same seeds
     (results/final.csv, final_runs.csv);
   - the highest load each number of chains carries with acceptable QoS, with every lower load acceptable too
-    (final_capacity.csv), compared with the rule the neighbours used (the rule should describe the cell that applies it);
+    (final_capacity.csv), compared with the rule the neighbours used (which should describe the cell applying it);
   - one day (8/12/4 h) on this configuration, Piovesan and 3GPP (final_daily.csv, final_threegpp.csv), and with three
     power models: Piovesan and 3GPP Category 1 and 2 (final_models.csv);
   - figures final_curves.png, final_capacity.png, final_daily.png and final_models.png.
@@ -70,15 +70,16 @@ def runs():
                     neighbour_load = min(150, load * factor)
                     rows.append(dict(factor=folder, load=load, chains=chains, seed=seed, nb_load=neighbour_load,
                                      nb_chains=rule(neighbour_load),
-                                     piovesan=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
-                                     piovesan_on=float(power.piovesan(metrics["prb_load"], chains)) * campaign.W,
+                                     piovesan=campaign.watt(metrics, chains),
+                                     piovesan_on=campaign.watt(metrics, chains, symbol=False),
                                      tgpp=slot_power(prefix, chains, True, 1)[0].mean(),
                                      tgpp_on=slot_power(prefix, chains, False, 1)[0].mean(),
                                      prb=100 * metrics["prb_load"], loss=100 * metrics["loss"], thr=metrics["thr"],
                                      sinr=rx.sinr_db_w.sum() / rx.res.sum(),               # weighted by resources [dB]
                                      bler=100 * rx.corrupt.sum() / rx.tbs.sum()))          # blocks in error [%]
                     flows = pd.read_csv(f"{prefix}_flows.csv")
-                    users.append(flows[flows.kind == "burst"].assign(factor=folder, load=load, chains=chains, seed=seed))
+                    burst = flows[flows.kind == "burst"]
+                    users.append(burst.assign(factor=folder, load=load, chains=chains, seed=seed))
     table, users = pd.DataFrame(rows), pd.concat(users)
     users["over"] = users.delay_p95_s * 1e3 > campaign.LIMIT_MS
     per_run = users.groupby(["factor", "load", "chains", "seed"]).agg(over=("over", "sum"), users=("over", "size"))
@@ -97,7 +98,8 @@ def table(runs):
     out = grouped.agg(seeds=("seed", "size"), nb_load=("nb_load", "first"), nb_chains=("nb_chains", "first"),
                       piovesan=("piovesan", "mean"), saving=("saving", "mean"), saving_3gpp=("saving_3gpp", "mean"),
                       prb=("prb", "mean"), loss=("loss", "mean"), sinr=("sinr", "mean"), bler=("bler", "mean"),
-                      over=("over", "sum"), users=("users", "sum"), ref_over=("ref_over", "sum"), ref_users=("ref_users", "sum"))
+                      over=("over", "sum"), users=("users", "sum"), ref_over=("ref_over", "sum"),
+                      ref_users=("ref_users", "sum"))
     out["saving_ci"] = grouped.saving.apply(half_ci)
     out["over_pct"] = 100 * out.over / out.users
     out["extra_pct"] = out.over_pct - 100 * out.ref_over / out.ref_users
@@ -127,7 +129,8 @@ def level_run(level, chains, seed):
     """Run used for a level of the day: peak from the grid or main campaign (with video), night and day from x1."""
     if level == "peak":
         grid = paths.RAW / "bs-results-grid" / f"peak100_a{chains}_r{seed}"
-        return grid if grid.with_name(grid.name + "_flows.csv").exists() else campaign.RAW / f"peak100_a{chains}_r{seed}"
+        main = campaign.RAW / f"peak100_a{chains}_r{seed}"
+        return grid if grid.with_name(grid.name + "_flows.csv").exists() else main
     return RAW / "x1" / name(1 if level == "night" else 40, chains, seed)
 
 
@@ -137,7 +140,7 @@ def piovesan_level(level, chains, symbol):
     for seed in range(1, campaign.SEEDS + 1):
         prefix = level_run(level, chains, seed)
         metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
-        out.append(float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"] if symbol else 0)) * campaign.W)
+        out.append(campaign.watt(metrics, chains, symbol))
     return np.array(out)
 
 
@@ -239,8 +242,8 @@ def plot_curves(result):
     for chains in CHAINS:
         line = same_load.xs(chains, level="chains")
         ax_saving.plot(line.index, line.saving, color=colors[chains], lw=1.6, label=f"{chains} chains")
-        ax_saving.scatter(line.index[~line.ok], line.saving[~line.ok], s=40, facecolor="white", edgecolor=colors[chains],
-                          lw=1.4, zorder=3)
+        ax_saving.scatter(line.index[~line.ok], line.saving[~line.ok], s=40, facecolor="white",
+                          edgecolor=colors[chains], lw=1.4, zorder=3)
         ax_saving.scatter(line.index[line.ok], line.saving[line.ok], s=16, color=colors[chains], zorder=3)
         if chains != 64:
             ax_qos.errorbar(line.index, line.extra_pct, yerr=line.extra_ci, color=colors[chains], lw=1.4, capsize=2,
@@ -249,13 +252,12 @@ def plot_curves(result):
                   title="Power: symbol shutdown + fewer chains")
     ax_saving.legend(frameon=False, fontsize=8, loc="lower left", bbox_to_anchor=(0.12, 0.08))
     ax_saving.text(.02, .03, "hollow: QoS not acceptable", transform=ax_saving.transAxes, fontsize=8, color=INK)
-    ax_qos.axhline(100 * campaign.MAX_EXTRA_USERS, color=ORANGE, lw=1, ls="--")
-    ax_qos.text(2, 100 * campaign.MAX_EXTRA_USERS + .8, "limit: +5 users in 100", fontsize=8, color=INK)
+    ax_qos.axhline(100 * campaign.MAX_EXTRA_USERS, color=INK, lw=1, ls="--", label="limit: +5 users in 100")
     ax_qos.set(xlabel="burst load of cell 0 [Mbit/s]", ylabel="extra burst users over 20 ms vs 64 chains [points]",
                title="QoS cost (95% CI over seeds)")
     ax_qos.legend(frameon=False, fontsize=8, loc="upper left")
-    save(fig, "final_curves.png", "Every cell picks its chains for its own load; neighbours at the same load as cell 0. "
-                                  "10 seeds, 20 for 64/48/32 chains at 80-150 Mbit/s")
+    save(fig, "final_curves.png", "Every cell picks its chains for its own load; neighbours at the same load as "
+                                  "cell 0. 10 seeds, 20 for 64/48/32 chains at 80-150 Mbit/s")
 
 
 def plot_capacity(limits):
@@ -267,38 +269,27 @@ def plot_capacity(limits):
         ax.bar(np.arange(len(shown)) + (k - 1) * width, values, width * .92, color=color,
                label=f"neighbours at {FACTORS[folder]:g}x the load")
         for i, y in enumerate(values):   # 150 is the highest simulated load: the real limit may be higher
-            ax.text(i + (k - 1) * width, y + 2, f"{y:g}+" if y == max(LOADS) else f"{y:g}", ha="center", fontsize=7.5, color=INK)
+            label = f"{y:g}+" if y == max(LOADS) else f"{y:g}"
+            ax.text(i + (k - 1) * width, y + 2, label, ha="center", fontsize=7.5, color=INK)
     ax.set(xticks=range(len(shown)), xticklabels=[f"{a} chains" + (" + symbol" if a == 64 else "") for a in shown],
-           ylim=(0, 170), ylabel="highest load with acceptable QoS [Mbit/s]", title="How much load fewer chains can carry")
+           ylim=(0, 170), ylabel="highest load with acceptable QoS [Mbit/s]",
+           title="How much load fewer chains can carry")
     ax.legend(frameon=False, fontsize=8, loc="upper left")
-    save(fig, "final_capacity.png", "64 chains: losses under 1% (it is the QoS reference). 150+: highest load simulated. "
-                                    "0.5x and 2x at 10-20-40-60-80-100-120-150 Mbit/s, 1x every 10")
+    save(fig, "final_capacity.png", "64 chains: losses under 1% (it is the QoS reference). 150+: highest load "
+                                    "simulated. 0.5x and 2x at 10-20-40-60-80-100-120-150 Mbit/s, 1x every 10")
 
 
 CHAINS_BY_LEVEL = {"night": 16, "day": 16, "peak": 48}     # the final best setting
 
 
-def level_metrics(level, chains):
-    """ns3data metrics of a level of the day, one dict per seed."""
-    out = []
-    for seed in range(1, campaign.SEEDS + 1):
-        prefix = level_run(level, chains, seed)
-        out.append(ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION))
-    return out
-
-
 def day_models(days_3gpp):
     """Saving of one day per power model and policy, final configuration: Piovesan from the same runs as the day,
     3GPP Category 1 and 2 from day_3gpp. Only 3GPP has light and deep sleep."""
-    def piovesan_watts(level, chains, symbol):
-        return np.array([float(power.piovesan(m["prb_load"], chains, m["pa_off"] if symbol else 0)) * campaign.W
-                         for m in level_metrics(level, chains)])
-
     rows = []
-    always_on = sum(h * piovesan_watts(level, 64, False) for level, h in HOURS.items())
+    always_on = sum(h * piovesan_level(level, 64, False) for level, h in HOURS.items())
     for policy in ("symbol", "channel", "symbol + channel"):
-        energy = sum(h * piovesan_watts(level, CHAINS_BY_LEVEL[level] if "channel" in policy else 64, "symbol" in policy)
-                     for level, h in HOURS.items())
+        chains = CHAINS_BY_LEVEL if "channel" in policy else dict.fromkeys(HOURS, 64)
+        energy = sum(h * piovesan_level(level, chains[level], "symbol" in policy) for level, h in HOURS.items())
         saving = 100 * (1 - energy / always_on)
         rows.append(dict(model="Piovesan", policy=policy, saving=saving.mean(), ci=half_ci(saving), qos_ok=True))
     names = {1: "3GPP Category 1", 2: "3GPP Category 2"}
@@ -344,16 +335,17 @@ def plot_models(models):
                                   "(QoS: p95 delay within 20 ms). No bar: not possible (see the README). 10 seeds")
 
 
-def plot_day(day, days_3gpp):
+def plot_day(day):
     """The day figure of the README, on the final configuration (same drawing as step 3)."""
     from studies import daily
     shown = {"always on": "always on", "symbol": "symbol", FINAL_POLICY: "symbol + channel", NIGHT_SLEEP: NIGHT_SLEEP,
              "+ night carriers off*": "+ night carriers off*", "+ night dormancy*": "+ night dormancy*"}
-    table = day.loc[list(shown)].rename(index=shown).rename(columns=dict(kwh="kWh_day", kwh_ci="kWh_ci", saving="saving_pct"))
+    columns = dict(kwh="kWh_day", kwh_ci="kWh_ci", saving="saving_pct")
+    table = day.loc[list(shown)].rename(index=shown).rename(columns=columns)
     daily.plot(table, list(shown.values()), formula_only=("+ night carriers off*", "+ night dormancy*"),
                filename="final_daily.png",
-               note="Night, day: final campaign; peak: 48 chains, video profile. * formula only (no wake-up, no 4G QoS). "
-                    "10 seeds; 95% CI")
+               note="Night, day: final campaign; peak: 48 chains, video profile. * formula only (no wake-up, no 4G "
+                    "QoS). 10 seeds; 95% CI")
 
 
 if __name__ == "__main__":
@@ -384,7 +376,7 @@ if __name__ == "__main__":
 
     plot_curves(result)
     plot_capacity(limits)
-    plot_day(day, days_3gpp)
+    plot_day(day)
     models = day_models(days_3gpp)
     models.to_csv(paths.RESULTS / "final_models.csv", index=False)
     print("\none day per power model:\n", models.round(2).to_string(index=False))

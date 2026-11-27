@@ -45,12 +45,14 @@ def antenna(ax, x, y, color, k=1.0):
     for f in (.25, .5, .75):                                            # lattice: cross bars and diagonals
         w = 16 - 12 * f
         ax.plot([x - w * k, x + w * k], [y + 62 * f * k] * 2, color=color, lw=.8, zorder=6)
-    ax.plot([x - 16 * k, x + 10 * k, x - 7 * k, x + 4 * k], [y, y + 31 * k, y + 46 * k, y + 62 * k], color=color, lw=.6, zorder=6)
+    ax.plot([x - 16 * k, x + 10 * k, x - 7 * k, x + 4 * k], [y, y + 31 * k, y + 46 * k, y + 62 * k],
+            color=color, lw=.6, zorder=6)
     ax.add_patch(FancyBboxPatch((x - 7 * k, y + 60 * k), 14 * k, 30 * k, boxstyle=f"round,pad=0,rounding_size={3 * k}",
                                 facecolor=color, edgecolor="white", lw=.8, zorder=7))
     for r in (22, 36):                                                  # radio waves on both sides of the panel
         for t1, t2 in ((-45, 45), (135, 225)):
-            ax.add_patch(Arc((x, y + 75 * k), 2 * r * k, 2 * r * k, theta1=t1, theta2=t2, color=color, lw=1.2, zorder=6))
+            ax.add_patch(Arc((x, y + 75 * k), 2 * r * k, 2 * r * k, theta1=t1, theta2=t2, color=color, lw=1.2,
+                             zorder=6))
 
 
 def phone(ax, x, y, color, k=1.0):
@@ -70,7 +72,8 @@ def draw_map(ax):
             phone(ax, *p, color, 1.4)
         antenna(ax, s[0], s[1] - 45, ORANGE if g == 0 else MUTED, 1.5)
         name = "Cell 0: measured, saves energy" if g == 0 else f"Neighbour {g}: interference"
-        ax.text(s[0], s[1] - RADIUS - 8 if g == 0 else s[1] + RADIUS + 18, name, ha="center", va="top" if g == 0 else "bottom",
+        y_name = s[1] - RADIUS - 8 if g == 0 else s[1] + RADIUS + 18      # cell 0: below its circle; others: above
+        ax.text(s[0], y_name, name, ha="center", va="top" if g == 0 else "bottom",
                 fontsize=9, color=INK, weight="bold" if g == 0 else "normal", zorder=8,
                 bbox=dict(fc="white", ec="none", alpha=.8, pad=1))
     ax.annotate("", SITES[1], SITES[0], arrowprops=dict(arrowstyle="<->", color=INK, lw=1, shrinkA=4, shrinkB=22))
@@ -78,7 +81,7 @@ def draw_map(ax):
     ax.text(mid[0] + 22, mid[1] - 14, "500 m", fontsize=9, color=INK, rotation=60, ha="center", va="center")
     ax.plot([0, RADIUS], [0, 0], color=INK, lw=1)
     ax.text(RADIUS * .62, 10, "250 m", fontsize=9, color=INK, ha="center")
-    ax.set(xlim=(-520, 520), ylim=(-520, 740), aspect="equal", xticks=[], yticks=[])
+    ax.set(xlim=(-520, 520), ylim=(-520, 800), aspect="equal", xticks=[], yticks=[])   # top: room for the names
     clean(ax)
     ax.set_title("3 sites, 10 users each (urban macro, 3GPP UMa)", fontsize=11, color=INK)
     antenna(ax, -500, -352, INK, .45)
@@ -133,10 +136,12 @@ def draw_frame(ax):
 
 if __name__ == "__main__":
     fig = plt.figure(figsize=(11, 5.6))
-    gs = fig.add_gridspec(3, 2, width_ratios=(1.15, 1), height_ratios=(1.5, .8, .8), wspace=.08, hspace=1.0)
+    gs = fig.add_gridspec(3, 2, width_ratios=(.8, 1), height_ratios=(1.5, .8, .8), wspace=.08, hspace=1.0,
+                          left=.01, right=.99, top=.94, bottom=.13)    # bottom: x labels and the note
     draw_map(fig.add_subplot(gs[:, 0]))
     draw_array(fig.add_subplot(gs[0, 1]))
     draw_carriers(fig.add_subplot(gs[1, 1]))
     draw_frame(fig.add_subplot(gs[2, 1]))
-    save(fig, "scenario.png", "Geometry and radio settings from bs-energy.cc; user positions are an example (NS-3 draws "
-                              "them per seed, shadowing included). 104.9 W radiated at 64 chains, SU-MIMO with 2 layers.")
+    save(fig, "scenario.png", "Geometry and radio settings from bs-energy.cc; user positions are an example (NS-3 "
+                              "draws them per seed, shadowing included). 104.9 W radiated at 64 chains, SU-MIMO with "
+                              "2 layers.", tight=False)

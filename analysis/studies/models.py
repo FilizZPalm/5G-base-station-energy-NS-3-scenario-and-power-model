@@ -17,7 +17,7 @@ import pandas as pd
 
 from lib import campaign, paths, power
 from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, PROFILES, save
-from studies.daily import HOURS, half_ci
+from studies.daily import HOURS, half_ci, runs_by_key
 
 # ASSUMPTIONS ------------------------------------------------------------------------------------------------------
 K_USERS = 1               # SU-MIMO: one user per resource (a sensitivity with 10 is printed)
@@ -66,10 +66,6 @@ CAN_SLEEP = {"Piovesan", "EARTH macro", "EARTH RRH"}
 CAN_SWITCH_CHAINS = {"Piovesan", "Bjornson", "Bjornson, 0.1 W/ant."}
 
 
-def runs_by_key():
-    return campaign.runs.set_index(["profile", "chains", "seed"]).sort_index()
-
-
 def watt(runs, model, profile, chains=64, sleep=False):
     """Power of one level, one value per seed [W]."""
     return np.asarray(MODELS[model](runs.loc[(profile, chains)], chains, sleep), float)
@@ -84,7 +80,8 @@ def policy_watt(runs, model, profile, policy):
 
 def plot(runs):
     """Always on: watts per level, and the same as a share of each model's full-load power."""
-    colors = {"Piovesan": BLUE, "EARTH macro": ORANGE, "EARTH RRH": AQUA, "Bjornson": MUTED, "Bjornson, 0.1 W/ant.": "#a3a29c"}
+    colors = {"Piovesan": BLUE, "EARTH macro": ORANGE, "EARTH RRH": AQUA, "Bjornson": MUTED,
+              "Bjornson, 0.1 W/ant.": "#a3a29c"}
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.4))
     for k, model in enumerate(MODELS):
         x = np.arange(3) + (k - 2) * .17
@@ -112,7 +109,8 @@ if __name__ == "__main__":
     for model in MODELS:
         e_always_on = sum(h * policy_watt(runs, model, p, "always on") for p, h in HOURS.items()) / 1000
         for policy in POLICIES:
-            expressible = (("symbol" not in policy) or model in CAN_SLEEP) and (("channel" not in policy) or model in CAN_SWITCH_CHAINS)
+            expressible = ((("symbol" not in policy) or model in CAN_SLEEP)
+                           and (("channel" not in policy) or model in CAN_SWITCH_CHAINS))
             e = sum(h * policy_watt(runs, model, p, policy) for p, h in HOURS.items()) / 1000    # kWh per seed
             saving = 100 * (1 - e / e_always_on)
             rows.append(dict(model=model, policy=policy, expressible=expressible, kWh_day=e.mean(),
@@ -126,9 +124,10 @@ if __name__ == "__main__":
     for model in MODELS:
         z, full = ZERO_LOAD_W[model], FULL_LOAD_W[model]
         print(f"  {model}: {z:.0f} / {full:.0f} W = {100 * z / full:.0f} %")
-    print("Bjornson K=10:", {p: round(float(np.mean(bjornson(runs.loc[(p, 64)].prb_load, runs.loc[(p, 64)].thr / 1e3, 64, 10))), 1)
-                             for p in HOURS})
+    k10 = {p: bjornson(runs.loc[(p, 64)].prb_load, runs.loc[(p, 64)].thr / 1e3, 64, 10) for p in HOURS}
+    print("Bjornson K=10:", {p: round(float(np.mean(w)), 1) for p, w in k10.items()})
     z = float(power.piovesan(0)) * campaign.W
-    print(f"P_BS per antenna for Bjornson to match Piovesan at zero load: {(z - float(bjornson(0, 0, 64)) + 64) / 64:.1f} W (paper: 1)")
+    p_bs = (z - float(bjornson(0, 0, 64)) + 64) / 64
+    print(f"P_BS per antenna for Bjornson to match Piovesan at zero load: {p_bs:.1f} W (paper: 1)")
 
     plot(runs)
