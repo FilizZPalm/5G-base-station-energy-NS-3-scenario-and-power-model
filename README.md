@@ -9,28 +9,25 @@ with the AAU power model of Piovesan et al. (2022).
 This page gives the scenario, the main results and how to set up. The full record of the work, step by
 step, is in [docs/STEPS.md](docs/STEPS.md); every command to rerun it is in [docs/RUN.md](docs/RUN.md).
 
-## Results at a glance
+## Results
 
-Final configuration: every site picks its own chains for its own load.
+Energy saved over one day (8 h night, 12 h day, 4 h peak) against the same base station with everything always on.
+The antenna has 64 elements, and each is driven by its own chain: the transmitter electronics and the power
+amplifier behind that element. Every site picks how many chains to keep on from its own load.
 
-| Question | Answer (10 seeds, 20 at high load; 95% CI where shown) |
-|---|---|
-| Saving over a day, symbol + channel shutdown | **-28.6 ± 0.4%** (16.81 -> 12.00 kWh) |
-| Best setting per traffic level | night and day: 16 of 64 chains + symbol shutdown; peak: 48 chains + symbol |
-| Load that fewer chains carry with acceptable QoS | 16 chains up to 50 Mbit/s, 24 up to 60, 48 up to 100; above 120 even 64 saturate |
-| A rule that picks the chains from the load measured every 5 min | **-24.8%** with QoS unacceptable 0.05% of the time (oracle -27.6%) |
-| Same traffic, 3GPP power model (TR 38.864) | symbol + channel **-49%**; with light sleep at night (SSB every 160 ms) **-56.6%** |
+| What is switched off | Saving per day | QoS cost |
+|---|---|---|
+| Power amplifiers in empty symbols (symbol shutdown) | 19% | none |
+| + unused antenna chains: 16 of 64 kept at night and by day, 48 at peak | **29%** | at peak, 4 more users in 100 over 20 ms (limit: 5) |
+| + sleep of the whole unit between bursts at night, 0.5 ms to wake up | 33% | none: night delays grow by 0.25 ms |
+| Same, with a rule that picks the chains from the load measured every 5 min | 25% | QoS not acceptable 0.05% of the time |
+| Same as the second row, with the 3GPP power model instead of Piovesan | 49% | as the second row |
+| + light sleep of the whole unit at night (3GPP model) | 57% | none: night delays stay under 10 ms |
 
-Earlier configuration (neighbour sites always at 64 chains, 64 at peak):
-
-| Question | Answer |
-|---|---|
-| ... adding a 0.5 ms sleep mode, simulated in NS-3 | **-32.9 ± 0.6%** over a day (against -27.3% without it) |
-| Energy efficiency over a day | 53.3 -> 73.3 kbit/J (+37%) |
-| TDMA instead of OFDMA scheduling | about 1% less energy over a day, and fewer users over 20 ms at peak (8 -> 4 of 70) |
-
-All of this rests on the assumptions listed [at the end](#main-assumptions-and-limits): the traffic
-levels, the hours per level, the 20 ms delay limit and the pairing of sleep times with sleep powers.
+Energy efficiency, TDMA scheduling and the other studies are in [STEPS.md](docs/STEPS.md). All numbers rest on
+the assumptions listed
+[at the end](#main-assumptions-and-limits): the traffic levels, the hours per level, the 20 ms delay limit and the
+relative QoS criterion.
 
 ## Method
 
@@ -38,7 +35,8 @@ levels, the hours per level, the 20 ms delay limit and the pairing of sleep time
 
 **Scenario** (`ns-3.46.1/scratch/bs-energy.cc`). Three sites 500 m apart (cell radius 250 m), 10 users per site, urban
 macro channel (3GPP UMa) with shadowing. Each site is one active antenna unit (AAU) with two contiguous
-30 MHz carriers at 3.5 GHz (n78), TDD pattern DDDSU and a 64-element array. Only cell 0 is measured. In the
+30 MHz carriers at 3.5 GHz (n78), TDD pattern DDDSU and a 64-element array; each element has its own transceiver
+chain (digital-to-analogue converter, radio-frequency electronics and power amplifier). Only cell 0 is measured. In the
 final study each neighbour picks its chains for its own load, which is the same as, half or twice that of cell 0;
 in the earlier steps the neighbours kept 64 chains. Scheduling is proportional fair. SU-MIMO with two layers is on;
 MU-MIMO is not available in 5G-LENA for the downlink. Each user is attached to its strongest site.
@@ -85,12 +83,24 @@ the same load as 24.
 
 ![Highest load each number of chains carries with acceptable QoS](analysis/figures/final_capacity.png)
 
-**Over a day: -28.6%** ([step 13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)), with 16 chains
-at night and by day and 48 at peak (-27.3% keeping 64 at peak). Sleeping between bursts with a 0.5 ms wake-up time
-adds about 18% at night, for about 1 ms more delay ([step 6](docs/STEPS.md#6-sleep-with-a-wake-up-time), earlier
-configuration: -32.9% over the day). What moves the daily saving most is the number of peak hours.
+*Data: final campaign `bs-results-indep`, 1890 runs, script `studies.final`. Day profile with 10 burst users per site
+from 5 to 150 Mbit/s, plus the night; cell 0 at 64, 48, 32, 24 and 16 chains; each neighbour at 0.5, 1 or 2 times
+the load of cell 0, with the chains the rule picks for its own load; OFDMA; 10 seeds, 20 for 64, 48 and 32 chains at
+80-150 Mbit/s with neighbours at the same load.*
 
-![Energy of one day per sleep policy, earlier configuration](analysis/figures/daily_power.png)
+**Over a day: -28.6%, and -32.5% with sleep at night** ([steps 6](docs/STEPS.md#6-sleep-with-a-wake-up-time) and
+[13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)), with 16 chains at night and by day and 48 at
+peak. Sleeping between bursts at night with a 0.5 ms wake-up time adds about 18% at night, and the night delays
+grow by only 0.25 ms. What moves the daily saving most is the number of peak hours.
+
+![Energy of one day per policy](analysis/figures/final_daily.png)
+
+*Data: night and day from the final campaign with neighbours at the same load as cell 0 (`bs-results-indep/x1`:
+night at 1 Mbit/s and day at 40 Mbit/s, 64 and 16 chains). Peak: the profile with video at 100 Mbit/s, 64 and 48
+chains (`bs-results-main` and `bs-results-grid`), whose neighbours keep 64 chains because the final campaign has no
+video; neighbours that also save would only lower the interference. Sleep at night: `bs-results-wake`, 10 runs,
+neighbours at 64 chains, which at 1 Mbit/s makes no difference. Orange bars: power formula only. OFDMA, 10 seeds.
+Script `studies.final`.*
 
 **A simple rule gets most of it without knowing the traffic**
 ([steps 11 and 13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)). Every 5 minutes it measures
@@ -99,17 +109,47 @@ the QoS unacceptable 0.05% of the time. Deciding every hour is too slow.
 
 ![Saving against time with QoS not acceptable](analysis/figures/policy_tradeoff_final.png)
 
-**The power model matters as much as the technique** ([step 10](docs/STEPS.md#10-the-3gpp-power-model)). With
-the 3GPP TR 38.864 model (Category 1) the same traffic saves 49%, and 56.6% with light sleep at night, because
-an empty symbol costs 20% of full load there against 47% in Piovesan. The report does not say which of its two
-categories of values applies to real equipment.
+*Data: power and QoS per load and chains from the final campaign with neighbours at the same load as cell 0
+(`bs-results-indep/x1`, 1090 runs), applied to 300 synthetic days of 5-minute loads (our 8/12/4 h levels with
+one-hour ramps and a random fluctuation). Script `studies.policy --final`.*
 
-![One day with Piovesan and the 3GPP model](analysis/figures/threegpp.png)
+**The power model matters as much as the technique** ([step 10](docs/STEPS.md#10-the-3gpp-power-model)). On the same
+traffic and with the same choices, symbol and channel shutdown save 29% with Piovesan and 49-51% with the 3GPP
+TR 38.864 model, and up to 60% with sleep at night. Symbol shutdown alone saves 19% with Piovesan and 39-44% with
+3GPP: in 3GPP an empty symbol costs 20% of full load, in Piovesan 47%. Fewer chains alone save 24% with Piovesan and
+38% with 3GPP. The 3GPP report does not say which of its two categories of values applies to real equipment. Two
+older models, EARTH and Björnson, can each express only one of the two techniques; they are compared in
+[step 5](docs/STEPS.md#5-other-power-models-earth-and-björnson).
 
-Also in [STEPS.md](docs/STEPS.md): calibrating the peak load (1), energy efficiency in bit/J (4), the EARTH
-and Björnson power models (5), busier nights (7), TDMA against OFDMA and why TDMA serves the peak better
-(8, 9), all sites with fewer chains (12). Steps 1-12 keep the neighbours at 64 chains (12: at the chains of
-cell 0); step 13 recomputes steps 2, 3, 10 and 11 with every site deciding for itself.
+![One day with Piovesan and the 3GPP model](analysis/figures/final_models.png)
+
+*Data: the same runs as the day above (final campaign at night and by day, 48 chains at peak), through each power
+model. Light and deep sleep at night: simulated in NS-3 for 3GPP Category 1 (`bs-results-wake3gpp`, neighbours at
+64 chains, which at 1 Mbit/s makes no difference), estimated on the traces for Category 2. Script `studies.final`.*
+
+*Missing bars cannot be computed. Piovesan has no light or deep sleep state, only the sleep with a 0.5 ms wake-up of
+the day figure above. Category 2 of the 3GPP report takes 640 ms to go into light sleep and back, and 10 s for deep
+sleep: light sleep does not fit between two SSBs 160 ms apart, and deep sleep is as long as the whole 10 s simulated,
+so only light sleep without SSB can be estimated.*
+
+### Two more findings
+
+These come from the earlier configuration, with the neighbour sites always at 64 chains.
+
+**The scheduler is an energy lever too** ([steps 8](docs/STEPS.md#8-tdma-against-ofdma) and
+[9](docs/STEPS.md#9-why-tdma-serves-the-peak-better)). With TDMA instead of OFDMA each user gets the whole band for
+a few symbols, so the slot ends early and the power amplifiers sleep more (31% of the time at peak instead of 24%).
+At peak with 64 chains TDMA uses 3% less power and halves the burst users over 20 ms (8 to 4 of 70), with no late
+video segment (2 with OFDMA). Fewer blocks fail their first transmission, mostly because the interference of TDMA
+neighbours is flat across frequency.
+
+**Sleep pays only when the night is really quiet** ([step 7](docs/STEPS.md#7-busier-nights)). Sleep with a 0.5 ms
+wake-up adds 18% at night with 1 Mbit/s but 11% with 15 Mbit/s; with a 5 ms wake-up it falls from 17% to 4%. No user
+goes over 20 ms in any case.
+
+The rest of the work (calibrating the peak load, energy efficiency in bit/J, all sites with the same chains) is in
+[STEPS.md](docs/STEPS.md). Steps 1-12 keep the neighbours at 64 chains (12: at the chains of cell 0); step 13
+recomputes steps 2, 3, 10 and 11 with every site deciding for itself.
 
 ## Main assumptions and limits
 
@@ -125,8 +165,9 @@ cell 0); step 13 recomputes steps 2, 3, 10 and 11 with every site deciding for i
   chains, which is pessimistic for the QoS. The neighbours pick their chains with a fixed rule, more cautious than
   the limits measured, so those limits are lower bounds.
 - The 16-chain limit at 50 Mbit/s sits exactly on the criterion (+5.0 ± 7.7 points, 10 seeds).
-- The sleep-mode, energy-efficiency, power-model and scheduler studies (steps 4-9) use the earlier configuration,
-  with neighbours at 64 chains; at night and by day the neighbours make no difference ([step 12](docs/STEPS.md#12-all-sites-with-fewer-chains)).
+- The energy-efficiency, power-model and scheduler studies (steps 4, 5, 7-9) and sleep by day and at peak (step 6)
+  use the earlier configuration, with neighbours at 64 chains; at night and by day the neighbours make no difference
+  ([step 12](docs/STEPS.md#12-all-sites-with-fewer-chains)).
 - Sleep with a wake-up time is implemented on the OFDMA scheduler only, so TDMA was not combined with it.
 - With OFDMA, 18-25% of the blocks at peak fail their first transmission, above the usual 10% target:
   5G-LENA has no outer loop link adaptation. A simple one is available (`--ollaStep`, off) but made delay,

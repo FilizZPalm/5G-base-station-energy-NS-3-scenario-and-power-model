@@ -10,8 +10,9 @@ Outputs:
     (results/final.csv, final_runs.csv);
   - the highest load each number of chains carries with acceptable QoS, with every lower load acceptable too
     (final_capacity.csv), compared with the rule the neighbours used (the rule should describe the cell that applies it);
-  - one day (8/12/4 h) on this configuration, Piovesan and 3GPP Category 1 (final_daily.csv);
-  - figures final_curves.png and final_capacity.png.
+  - one day (8/12/4 h) on this configuration, Piovesan and 3GPP (final_daily.csv, final_threegpp.csv), and with three
+    power models: Piovesan and 3GPP Category 1 and 2 (final_models.csv);
+  - figures final_curves.png, final_capacity.png, final_daily.png and final_models.png.
 
 Run from analysis/:  ../.venv/bin/python -m studies.final
 """
@@ -22,7 +23,7 @@ import pandas as pd
 from lib import campaign, ns3data, paths, power
 from lib.style import AQUA, BLUE, INK, MUTED, ORANGE, save
 from studies.daily import half_ci
-from studies.threegpp import ns3_sleeps, slot_power, symbol_table
+from studies.threegpp import ns3_sleeps, sleep_level, slot_power, symbol_table, trace_sleeps
 
 RAW = paths.RAW / "bs-results-indep"
 FACTORS = {"x0.5": 0.5, "x1": 1, "x2": 2}          # folder -> neighbour load / load of cell 0
@@ -39,6 +40,8 @@ DAY_POLICIES = {"always on": {"night": (64, 0), "day": (64, 0), "peak": (64, 0)}
                 "symbol": {"night": (64, 1), "day": (64, 1), "peak": (64, 1)},
                 "symbol + channel, earlier (64 at peak)": {"night": (16, 1), "day": (16, 1), "peak": (64, 1)},
                 "symbol + channel, final (48 at peak)": {"night": (16, 1), "day": (16, 1), "peak": (48, 1)}}
+FINAL_POLICY = "symbol + channel, final (48 at peak)"
+NIGHT_SLEEP = "+ sleep at night, Tw 0.5 ms"
 
 
 def rule(load):
@@ -128,56 +131,99 @@ def level_run(level, chains, seed):
     return RAW / "x1" / name(1 if level == "night" else 40, chains, seed)
 
 
+def piovesan_level(level, chains, symbol):
+    """Piovesan power of a level of the day, one value per seed [W]."""
+    out = []
+    for seed in range(1, campaign.SEEDS + 1):
+        prefix = level_run(level, chains, seed)
+        metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
+        out.append(float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"] if symbol else 0)) * campaign.W)
+    return np.array(out)
+
+
+def tgpp_level(level, chains, symbol, cat=1):
+    """3GPP power of a level of the day, one value per seed [relative units]."""
+    return np.array([slot_power(level_run(level, chains, seed), chains, bool(symbol), cat)[0].mean()
+                     for seed in range(1, campaign.SEEDS + 1)])
+
+
+def night_variants():
+    """Night power of the variants that go beyond symbol + channel shutdown, one value per seed [W]:
+      sleep with a wake-up time of 0.5 ms (SSB every 20 ms), simulated in NS-3 (bs-results-wake, studies.wakeup_ns3);
+      all carriers off, or deep dormancy, from the power formula only; the 4G anchor carries the night traffic.
+    The sleep runs have neighbours at 64 chains; at 1 Mbit/s the neighbours make no difference (day_3gpp checks it)."""
+    from studies import wakeup_ns3
+    sleep_runs, _, _ = wakeup_ns3.load(campaign.runs.set_index(["profile", "chains", "seed"]))
+    night_sleep = sleep_runs[(sleep_runs.profile == "night") & (sleep_runs.tw == "0.5") & (sleep_runs.ssb == 20)]
+    sent = []
+    for seed in range(1, campaign.SEEDS + 1):
+        prefix = level_run("night", 64, seed)
+        sent.append(ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)["sent"])
+    anchor = power.ANCHOR_W_PER_MBPS * np.array(sent)
+    return {NIGHT_SLEEP: night_sleep.sort_values("seed").watt.to_numpy(),
+            "+ night carriers off*": power.CARRIER_OFF * campaign.W + anchor,
+            "+ night dormancy*": power.DORMANT * campaign.W + anchor}
+
+
 def day_energy():
-    """Per policy: energy of one day (Piovesan kWh), saving against always on (Piovesan and 3GPP Category 1) with 95%
-    CI, and the mean power of each level."""
-    level_power, rows = {}, []        # (level, chains, symbol, seed) -> (Piovesan W, 3GPP relative), computed once
-    for policy, levels in DAY_POLICIES.items():
-        for seed in range(1, campaign.SEEDS + 1):
-            kwh = tgpp = 0
-            for level, (chains, symbol) in levels.items():
-                if (level, chains, symbol, seed) not in level_power:
-                    prefix = level_run(level, chains, seed)
-                    metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
-                    level_power[(level, chains, symbol, seed)] = (
-                        float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"] if symbol else 0)) * campaign.W,
-                        slot_power(prefix, chains, bool(symbol), 1)[0].mean())
-                watt, rel = level_power[(level, chains, symbol, seed)]
-                kwh, tgpp = kwh + HOURS[level] * watt / 1e3, tgpp + HOURS[level] * rel
-                rows.append(dict(policy=policy, seed=seed, level=level, chains=chains, symbol=symbol, watt=watt, tgpp=rel))
-            rows.append(dict(policy=policy, seed=seed, level="day total", kwh=kwh, tgpp=tgpp))
-    rows = pd.DataFrame(rows)
-    totals = rows[rows.level == "day total"].set_index(["policy", "seed"])
-    always_on = totals.xs("always on", level="policy")
-    totals["saving"] = 100 * (1 - totals.kwh / always_on.kwh.reindex(totals.index, level="seed").to_numpy())
-    totals["saving_3gpp"] = 100 * (1 - totals.tgpp / always_on.tgpp.reindex(totals.index, level="seed").to_numpy())
-    grouped = totals.groupby("policy", sort=False)
-    out = grouped[["kwh", "saving", "saving_3gpp"]].mean().join(grouped.kwh.apply(half_ci).rename("kwh_ci")) \
-        .join(grouped.saving.apply(half_ci).rename("saving_ci")) \
-        .join(grouped.saving_3gpp.apply(half_ci).rename("saving_3gpp_ci"))
-    watts = rows[rows.level != "day total"].groupby(["policy", "level"], sort=False).watt.mean().unstack()
-    return out.join(watts.add_prefix("W_"))
+    """Per policy: energy of one day (Piovesan kWh), saving against always on (Piovesan and, where the policy exists
+    in the 3GPP model, Category 1) with 95% CI, and the mean power of each level."""
+    watts = {name: {level: piovesan_level(level, *setting) for level, setting in levels.items()}
+             for name, levels in DAY_POLICIES.items()}
+    rels = {name: {level: tgpp_level(level, *setting) for level, setting in levels.items()}
+            for name, levels in DAY_POLICIES.items()}
+    for name, night in night_variants().items():       # the rest of the day as the final symbol + channel
+        watts[name] = dict(watts[FINAL_POLICY], night=night)
+
+    def day_total(levels, scale):
+        total = 0
+        for level in HOURS:
+            total = total + HOURS[level] * levels[level] * scale
+        return total
+
+    always_on_kwh = day_total(watts["always on"], 1e-3)
+    always_on_rel = day_total(rels["always on"], 1)
+    rows = []
+    for name, levels in watts.items():
+        kwh = day_total(levels, 1e-3)
+        saving = 100 * (1 - kwh / always_on_kwh)
+        row = dict(policy=name, kwh=kwh.mean(), saving=saving.mean(), saving_3gpp=np.nan, kwh_ci=half_ci(kwh),
+                   saving_ci=half_ci(saving), saving_3gpp_ci=np.nan)
+        if name in rels:
+            saving_3gpp = 100 * (1 - day_total(rels[name], 1) / always_on_rel)
+            row |= dict(saving_3gpp=saving_3gpp.mean(), saving_3gpp_ci=half_ci(saving_3gpp))
+        rows.append(row | {f"W_{level}": levels[level].mean() for level in HOURS})
+    return pd.DataFrame(rows).set_index("policy")
 
 
-def day_light_sleep():
-    """3GPP Category 1: final policy with light sleep at night (SSB every 160 ms), simulated in NS-3 (studies.threegpp).
-    Those night runs have neighbours at 64 chains; at 1 Mbit/s the neighbours make no difference, which the last value
-    checks (largest difference between the earlier and the final night with 16 chains)."""
-    simulated, earlier = ns3_sleeps(), symbol_table()
-    night_sleep = simulated[(simulated.profile == "night") & (simulated.state == "light")
-                            & (simulated.ssb == "SSB 160 ms")].sort_values("seed").rel.to_numpy()
+def day_3gpp():
+    """3GPP Category 1 and 2, one day on the final configuration: symbol, symbol + channel (48 chains at peak) and
+    light or deep sleep at night on top (NS-3 where simulated, else the trace estimate, from studies.threegpp: their
+    nights have neighbours at 64 chains, which at 1 Mbit/s makes no difference; the returned check is the largest
+    difference between the earlier and the final night with 16 chains)."""
+    traced, simulated, earlier = trace_sleeps(), ns3_sleeps(), symbol_table()
+    rows = []
+    for cat in (1, 2):
+        always_on = sum(h * tgpp_level(level, 64, False, cat) for level, h in HOURS.items())
+        best = {"night": tgpp_level("night", 16, True, cat), "day": tgpp_level("day", 16, True, cat),
+                "peak": tgpp_level("peak", 48, True, cat)}
+        policies = {"always on": {level: tgpp_level(level, 64, False, cat) for level in HOURS},
+                    "symbol": {level: tgpp_level(level, 64, True, cat) for level in HOURS},
+                    "channel": {"night": tgpp_level("night", 16, False, cat), "day": tgpp_level("day", 16, False, cat),
+                                "peak": tgpp_level("peak", 48, False, cat)},
+                    "symbol + channel": best}
+        for name, ssb in (("+ light sleep at night", "SSB 160 ms"), ("+ light sleep at night", "no SSB"),
+                          ("+ deep sleep at night", "SSB 160 ms"), ("+ deep sleep at night", "no SSB")):
+            night = sleep_level(cat, "night", name.split()[1], ssb, traced, simulated)
+            if len(night):
+                policies[f"{name} ({ssb})"] = dict(best, night=night)
+        for name, levels in policies.items():
+            saving = 100 * (1 - sum(h * levels[level] for level, h in HOURS.items()) / always_on)
+            rows.append(dict(cat=cat, policy=name, saving=saving.mean(), ci=half_ci(saving)))
     night_earlier = earlier[(earlier.cat == 1) & (earlier.profile == "night") & (earlier.chains == 16)
                             & earlier.symbol].sort_values("seed").rel.to_numpy()
-
-    def level(level_name, chains, symbol):
-        return np.array([slot_power(level_run(level_name, chains, seed), chains, symbol, 1)[0].mean()
-                         for seed in range(1, campaign.SEEDS + 1)])
-
-    night_final = level("night", 16, True)
-    always_on = sum(h * level(level_name, 64, False) for level_name, h in HOURS.items())
-    e = HOURS["night"] * night_sleep + HOURS["day"] * level("day", 16, True) + HOURS["peak"] * level("peak", 48, True)
-    saving = 100 * (1 - e / always_on)
-    return dict(saving_3gpp=saving.mean(), ci=half_ci(saving), night_16_old_vs_final=np.abs(night_earlier - night_final).max())
+    check = np.abs(night_earlier - tgpp_level("night", 16, True, 1)).max()
+    return pd.DataFrame(rows), check
 
 
 # --- Figures ------------------------------------------------------------------------------------------------------
@@ -225,6 +271,77 @@ def plot_capacity(limits):
                                     "0.5x and 2x at 10-20-40-60-80-100-120-150 Mbit/s, 1x every 10")
 
 
+CHAINS_BY_LEVEL = {"night": 16, "day": 16, "peak": 48}     # the final best setting
+
+
+def level_metrics(level, chains):
+    """ns3data metrics of a level of the day, one dict per seed."""
+    out = []
+    for seed in range(1, campaign.SEEDS + 1):
+        prefix = level_run(level, chains, seed)
+        out.append(ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION))
+    return out
+
+
+def day_models(days_3gpp):
+    """Saving of one day per power model and policy, final configuration: Piovesan from the same runs as the day,
+    3GPP Category 1 and 2 from day_3gpp. Only 3GPP has light and deep sleep."""
+    def piovesan_watts(level, chains, symbol):
+        return np.array([float(power.piovesan(m["prb_load"], chains, m["pa_off"] if symbol else 0)) * campaign.W
+                         for m in level_metrics(level, chains)])
+
+    rows = []
+    always_on = sum(h * piovesan_watts(level, 64, False) for level, h in HOURS.items())
+    for policy in ("symbol", "channel", "symbol + channel"):
+        energy = sum(h * piovesan_watts(level, CHAINS_BY_LEVEL[level] if "channel" in policy else 64, "symbol" in policy)
+                     for level, h in HOURS.items())
+        saving = 100 * (1 - energy / always_on)
+        rows.append(dict(model="Piovesan", policy=policy, saving=saving.mean(), ci=half_ci(saving)))
+    names = {1: "3GPP Category 1", 2: "3GPP Category 2"}
+    for _, row in days_3gpp[days_3gpp.policy != "always on"].iterrows():
+        rows.append(dict(model=names[row["cat"]], policy=row["policy"], saving=row["saving"], ci=row["ci"]))
+    return pd.DataFrame(rows)
+
+
+MODEL_STYLE = {"Piovesan": BLUE, "3GPP Category 1": ORANGE, "3GPP Category 2": AQUA}
+
+
+def plot_models(models):
+    """Saving of one day, Piovesan and 3GPP, one group of bars per policy; no bar: the model cannot express it."""
+    policies = list(dict.fromkeys(models.policy))
+    order = ["symbol", "channel", "symbol + channel"] + [p for p in policies if p.startswith("+")]
+    fig, ax = plt.subplots(figsize=(9, 5.4))
+    y = np.arange(len(order))
+    width = .27
+    for k, (model, color) in enumerate(MODEL_STYLE.items()):
+        values = [models[(models.model == model) & (models.policy == p)].saving.mean() for p in order]
+        offset = y + (k - 1) * width
+        ax.barh(offset, values, width * .92, color=color, label=model)
+        for yi, v in zip(offset, values):
+            if np.isfinite(v):
+                ax.text(v + .5, yi, f"{v:.0f}%", va="center", fontsize=8, color=INK)
+    ax.set(yticks=y, yticklabels=order, xlabel="saving over one day against 64 chains always on [%]", xlim=(0, 100),
+           title="Same NS-3 traffic, three power models")
+    ax.invert_yaxis()
+    ax.grid(axis="y", visible=False)
+    ax.legend(frameon=False, loc="lower right")
+    save(fig, "final_models.png", "Hours 8/12/4, final configuration (16 chains at night and by day, 48 at peak). "
+                                  "Sleep at night: NS-3 where simulated, else trace estimate.\n"
+                                  "No bar: not possible (see the README). 10 seeds")
+
+
+def plot_day(day, days_3gpp):
+    """The day figure of the README, on the final configuration (same drawing as step 3)."""
+    from studies import daily
+    shown = {"always on": "always on", "symbol": "symbol", FINAL_POLICY: "symbol + channel", NIGHT_SLEEP: NIGHT_SLEEP,
+             "+ night carriers off*": "+ night carriers off*", "+ night dormancy*": "+ night dormancy*"}
+    table = day.loc[list(shown)].rename(index=shown).rename(columns=dict(kwh="kWh_day", kwh_ci="kWh_ci", saving="saving_pct"))
+    daily.plot(table, list(shown.values()), formula_only=("+ night carriers off*", "+ night dormancy*"),
+               filename="final_daily.png",
+               note="Night, day: final campaign; peak: 48 chains, video profile. * formula only (no wake-up, no 4G QoS). "
+                    "10 seeds; 95% CI")
+
+
 if __name__ == "__main__":
     pd.set_option("display.width", 250, "display.max_rows", 300, "display.max_columns", 30)
     all_runs = runs()
@@ -246,7 +363,15 @@ if __name__ == "__main__":
     day = day_energy()
     day.to_csv(paths.RESULTS / "final_daily.csv")
     print("\none day, 8/12/4 h, saving against 64 chains always on:\n", day.round(2).to_string())
-    print("3GPP Cat. 1, final + light sleep at night (SSB 160 ms):", day_light_sleep())
+    days_3gpp, check = day_3gpp()
+    days_3gpp.to_csv(paths.RESULTS / "final_threegpp.csv", index=False)
+    print("\none day, 3GPP:\n", days_3gpp.round(2).to_string(index=False))
+    print(f"night with 16 chains, earlier against final configuration, largest difference: {check:.4f}")
 
     plot_curves(result)
     plot_capacity(limits)
+    plot_day(day, days_3gpp)
+    models = day_models(days_3gpp)
+    models.to_csv(paths.RESULTS / "final_models.csv", index=False)
+    print("\none day per power model:\n", models.round(2).to_string(index=False))
+    plot_models(models)

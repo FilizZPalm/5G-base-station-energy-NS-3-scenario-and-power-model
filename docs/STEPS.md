@@ -284,11 +284,19 @@ late segment; step 11), so the best settings become 16 chains at night and by da
 | Symbol shutdown | 13.64 kWh | 18.9% | 38.8% |
 | Symbol + channel, 64 at peak (steps 2-3) | 12.23 kWh | 27.3% | 48.0% |
 | **Symbol + channel, 48 at peak** | **12.00 kWh** | **28.6 ± 0.4%** | **49.1%** |
+| ... + sleep at night, 0.5 ms wake-up (NS-3) | 11.35 kWh | 32.5% | |
 | ... + 3GPP light sleep at night (SSB every 160 ms) | | | **56.6%** |
+| ... + all carriers off at night (power formula only) | 11.21 kWh | 33.4% | |
+| ... + deep dormancy at night (power formula only) | 10.02 kWh | 40.4% | |
+
+![Energy of one day per policy, final configuration](../analysis/figures/final_daily.png)
+
+![One day with Piovesan and the 3GPP model, final configuration](../analysis/figures/final_models.png)
 
 The night and day powers are within 0.5 W of the main campaign (453.9 and 479.1 W with 16 chains): the gain comes
-from the peak. The light-sleep night is the NS-3 simulation of step 10, whose neighbours are at 64; at 1 Mbit/s the
-neighbours make no difference.
+from the peak. The sleeping nights are the NS-3 simulations of steps 6 and 10, whose neighbours are at 64; at 1 Mbit/s
+the neighbours make no difference. With sleep at night the night delays grow by 0.25 ms (median of the users' p95,
+6.0 to 6.25 ms) and no user goes over 20 ms.
 
 **The policy (step 11 again)** on the same 300 days, with the limits measured here and loads up to 150 Mbit/s
 instead of 100 (`studies.policy --final`).

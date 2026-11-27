@@ -72,22 +72,26 @@ def energy(policy, hours):
 NAMES = list(POLICIES) + list(NIGHT_STATES)
 
 
-def plot(table):
-    """Horizontal bars: energy of the day per policy, with the saving."""
+DAILY_NOTE = "* night from the power formula only (no wake-up, no 4G QoS). 10 seeds; bars: 95% CI"
+
+
+def plot(table, names=None, formula_only=NIGHT_STATES, filename="daily_power.png", note=DAILY_NOTE):
+    """Horizontal bars: energy of the day per policy, with the saving. table: indexed by policy, with kWh_day, kWh_ci
+    and saving_pct. Policies in formula_only are drawn in orange. Also used by studies.final."""
+    names = NAMES if names is None else names
     fig, ax = plt.subplots(figsize=(8, 4))
-    colors = [ORANGE if n in NIGHT_STATES else BLUE for n in NAMES]
-    ax.barh(NAMES[::-1], table.kWh_day[::-1], .6, color=colors[::-1], xerr=table.kWh_ci[::-1],
+    colors = [ORANGE if n in formula_only else BLUE for n in names]
+    ax.barh(names[::-1], table.kWh_day[names][::-1], .6, color=colors[::-1], xerr=table.kWh_ci[names][::-1],
             error_kw=dict(ecolor=INK, lw=1, capsize=2))
-    for n in NAMES:
+    for n in names:
         label = f"{table.kWh_day[n]:.1f} kWh" + (f"  (−{table.saving_pct[n]:.0f}%)" if n != "always on" else "")
         ax.text(table.kWh_day[n] + table.kWh_ci[n] + .2, n, label, va="center", fontsize=9, color=INK)
     ax.set(xlabel="AAU energy per day [kWh]", xlim=(0, 22),
            title=f"Energy of one day ({'/'.join(map(str, HOURS.values()))} h night/day/peak, assumed)")
     ax.grid(axis="y", visible=False)
     fig.tight_layout(rect=(0, .06, 1, 1))
-    fig.text(.01, .01, "* night from the power formula only (no wake-up, no 4G QoS). 10 seeds; bars: 95% CI",
-             fontsize=8, color=MUTED)
-    fig.savefig(OUT / "daily_power.png", dpi=200, facecolor="white")
+    fig.text(.01, .01, note, fontsize=8, color=MUTED)
+    fig.savefig(OUT / filename, dpi=200, facecolor="white")
 
 
 if __name__ == "__main__":

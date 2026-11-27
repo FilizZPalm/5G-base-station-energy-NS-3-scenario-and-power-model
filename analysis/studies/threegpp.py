@@ -153,20 +153,22 @@ def ns3_sleeps():
     return table
 
 
+def sleep_level(cat, profile, state, ssb, traced, simulated):
+    """Power of a level with light or deep sleep, one value per seed: NS-3 when all seeds were simulated, else the
+    trace estimate; empty if neither (the sleep does not fit between two SSBs). Also used by studies.final."""
+    for source in (simulated, traced):
+        if len(source):
+            rows = source[(source.cat == cat) & (source.profile == profile) & (source.state == state) & (source.ssb == ssb)]
+            if len(rows) == campaign.SEEDS:
+                return rows.sort_values("seed").rel.to_numpy()
+    return np.array([])
+
+
 def daily_savings(table, traced, simulated):
     """Saving of one day (8/12/4 h) per category and policy, against 64 chains always on, mean and 95% CI."""
     def level(cat, profile, chains, symbol):
         rows = table[(table.cat == cat) & (table.profile == profile) & (table.chains == chains) & (table.symbol == symbol)]
         return rows.sort_values("seed").rel.to_numpy()
-
-    def sleep_level(cat, profile, state, ssb):
-        """NS-3 when all seeds were simulated, else the trace estimate; empty if neither."""
-        for source in (simulated, traced):
-            if len(source):
-                rows = source[(source.cat == cat) & (source.profile == profile) & (source.state == state) & (source.ssb == ssb)]
-                if len(rows) == campaign.SEEDS:
-                    return rows.sort_values("seed").rel.to_numpy()
-        return np.array([])
 
     out = []
     for cat in (1, 2):
@@ -177,12 +179,12 @@ def daily_savings(table, traced, simulated):
                           ("+ light sleep at night", "no SSB"), ("+ deep sleep at night", "SSB 160 ms"),
                           ("+ deep sleep at night", "no SSB")):
             state = name.split()[1]                             # "light" or "deep"
-            night = sleep_level(cat, "night", state, ssb)
+            night = sleep_level(cat, "night", state, ssb, traced, simulated)
             if not len(night):
                 continue
             levels = dict(best, night=night)
             if "everywhere" in name:
-                levels = {p: sleep_level(cat, p, state, ssb) for p in HOURS}
+                levels = {p: sleep_level(cat, p, state, ssb, traced, simulated) for p in HOURS}
                 if any(not len(v) for v in levels.values()):
                     continue
             policies[f"{name} ({ssb})"] = levels
@@ -193,9 +195,15 @@ def daily_savings(table, traced, simulated):
     return pd.DataFrame(out)
 
 
-def plot(days):
-    """Saving of one day: Piovesan against 3GPP Category 1 and 2."""
-    piovesan = {n: 100 * (1 - energy(n, HOURS) / energy("always on", HOURS)).mean() for n in POLICIES}
+NOTE = ("Hours 8/12/4. Sleep: NS-3 where simulated, else trace estimate; no bar: not possible.\n"
+        "Deep sleep at night puts every night burst user over 20 ms. 10 seeds")
+
+
+def plot(days, piovesan=None, filename="threegpp.png", note=NOTE):
+    """Saving of one day: Piovesan against 3GPP Category 1 and 2. days: one row per category and policy with the
+    saving; piovesan: policy -> Piovesan saving (default: the main campaign). Also used by studies.final."""
+    if piovesan is None:
+        piovesan = {n: 100 * (1 - energy(n, HOURS) / energy("always on", HOURS)).mean() for n in POLICIES}
     names = [n for n in days[days.cat == 1].policy if n != "always on"]
     fig, ax = plt.subplots(figsize=(9, 4.6))
     y = np.arange(len(names))
@@ -212,8 +220,7 @@ def plot(days):
     ax.invert_yaxis()
     ax.grid(axis="y", visible=False)
     ax.legend(frameon=False, loc="lower right")
-    save(fig, "threegpp.png", "Hours 8/12/4. Sleep: NS-3 where simulated, else trace estimate; no bar: not possible.\n"
-                              "Deep sleep at night puts every night burst user over 20 ms. 10 seeds")
+    save(fig, filename, note)
 
 
 if __name__ == "__main__":
