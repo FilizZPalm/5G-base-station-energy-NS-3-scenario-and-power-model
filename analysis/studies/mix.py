@@ -24,9 +24,8 @@ COLS = ["watt_sym", "pa_off", "prb", "delay_ms", "over", "late", "loss", "retx",
 
 
 def late_segments(prefix):
-    segments = pd.read_csv(f"{prefix}_segments.csv")
-    whole = segments[segments.sent == segments.pkts]
-    return ((whole.rx < campaign.MIN_RX * whole.pkts) | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S)).sum()
+    """Late video segments of a run."""
+    return campaign.whole_segments(pd.read_csv(f"{prefix}_segments.csv")).late.sum()
 
 
 def load():

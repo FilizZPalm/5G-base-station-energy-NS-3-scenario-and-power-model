@@ -47,6 +47,15 @@ def t975(n):
     return T975_BY_DF[n - 1]
 
 
+def whole_segments(segments):
+    """The video segments of a run that were sent whole (segments cut by the start or the end of the run are dropped),
+    with complete = at least MIN_RX of the packets received, time_s = from the start of the segment to its last packet
+    received, and late = not complete or after SEGMENT_S. Every study judges the video with this."""
+    whole = segments[segments.sent == segments.pkts]
+    whole = whole.assign(complete=whole.rx >= MIN_RX * whole.pkts, time_s=whole.last_rx_s - whole.start_s)
+    return whole.assign(late=~whole.complete | (whole.time_s > SEGMENT_S))
+
+
 def load_run(profile, chains, seed):
     """One run of the main campaign -> (row of results, users table, segments table or None)."""
     prefix = RAW / f"{profile}_a{chains}_r{seed}"
@@ -85,10 +94,7 @@ def load():
     users["p95_ms"] = users.delay_p95_s * 1e3
     burst = users[users.kind == "burst"]
 
-    whole = segments[segments.sent == segments.pkts]   # segments cut by the start or the end of the run are dropped
-    whole = whole.assign(complete=whole.rx >= MIN_RX * whole.pkts, time_s=whole.last_rx_s - whole.start_s)
-    whole["late"] = ~whole.complete | (whole.time_s > SEGMENT_S)
-    return dict(runs=runs, users=users, segs=segments, burst=burst, whole=whole)
+    return dict(runs=runs, users=users, segs=segments, burst=burst, whole=whole_segments(segments))
 
 
 _tables = None

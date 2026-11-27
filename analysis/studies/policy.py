@@ -71,9 +71,7 @@ def late_segments(prefix):
     """Late video segments of a run (0 if it has no video)."""
     if not prefix.with_name(prefix.name + "_segments.csv").exists():
         return 0
-    segments = pd.read_csv(f"{prefix}_segments.csv")
-    whole = segments[segments.sent == segments.pkts]
-    return int(((whole.rx < campaign.MIN_RX * whole.pkts) | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S)).sum())
+    return int(campaign.whole_segments(pd.read_csv(f"{prefix}_segments.csv")).late.sum())
 
 
 def curves():

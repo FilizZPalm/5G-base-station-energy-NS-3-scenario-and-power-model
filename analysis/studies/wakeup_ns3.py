@@ -121,10 +121,9 @@ if __name__ == "__main__":
     pd.set_option("display.width", 250, "display.max_columns", 30)
     print(result.round(2).to_string(index=False))
 
-    whole = segments[segments.sent == segments.pkts]
-    late = (whole.rx < campaign.MIN_RX * whole.pkts) | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S)
+    whole = campaign.whole_segments(segments)
     late_no_sleep = campaign.whole[(campaign.whole.profile == "peak100") & (campaign.whole.chains == 64)].late.sum()
-    print("peak segments late:", int(late.sum()), "of", len(whole), "| without sleep:", int(late_no_sleep))
+    print("peak segments late:", int(whole.late.sum()), "of", len(whole), "| without sleep:", int(late_no_sleep))
 
     print_days(runs, main)
     plot(result)

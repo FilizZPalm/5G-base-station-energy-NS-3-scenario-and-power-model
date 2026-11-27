@@ -29,9 +29,7 @@ def run(raw, profile, chains, seed):
     burst = flows[flows.kind == "burst"]
     late = 0
     if profile == "peak100":
-        segments = pd.read_csv(f"{prefix}_segments.csv")
-        whole = segments[segments.sent == segments.pkts]
-        late = int(((whole.rx < campaign.MIN_RX * whole.pkts) | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S)).sum())
+        late = int(campaign.whole_segments(pd.read_csv(f"{prefix}_segments.csv")).late.sum())
     out = dict(watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
                prb=100 * metrics["prb_load"], over=int((burst.delay_p95_s * 1e3 > campaign.LIMIT_MS).sum()),
                users=len(burst), late=late, loss=100 * metrics["loss"])

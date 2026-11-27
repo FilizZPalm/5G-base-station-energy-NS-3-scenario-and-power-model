@@ -12,7 +12,7 @@ A load is a good peak level if most seeds pass all three. Run from analysis/:  .
 """
 import pandas as pd
 
-from lib import ns3data, paths, power
+from lib import campaign, ns3data, paths, power
 
 RAW_FOLDER = paths.RAW / "bs-results-load"
 LOADS_MBPS = (80, 100, 120)
@@ -22,18 +22,13 @@ CHAINS = 64
 
 # ASSUMPTIONS: the QoS limits (the same as in lib/campaign.py)
 DELAY_LIMIT_MS = 20      # a burst user is "over the limit" if its p95 delay is above this
-SEGMENT_DEADLINE_S = 2.0  # a video segment must be received within this time ...
-SEGMENT_MIN_SHARE = 0.99  # ... with at least this share of its packets
 MAX_LOSS = 0.01           # at most 1% of the packets lost
 
 
 def late_segments(segments):
-    """Video segments that arrived incomplete or too late. Segments cut by the start or the end of the run
-    (not all packets sent) are ignored."""
-    complete = segments[segments.sent == segments.pkts]
-    incomplete = complete.rx < SEGMENT_MIN_SHARE * complete.pkts
-    too_slow = complete.last_rx_s - complete.start_s > SEGMENT_DEADLINE_S
-    return complete[incomplete | too_slow], len(complete)
+    """Video segments that arrived incomplete or too late (lib.campaign.whole_segments), and how many were whole."""
+    whole = campaign.whole_segments(segments)
+    return whole[whole.late], len(whole)
 
 
 def prb_load_per_carrier(slots_file):

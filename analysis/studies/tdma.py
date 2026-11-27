@@ -46,10 +46,7 @@ def load():
                         segments.append(pd.read_csv(segments_file).assign(**key))
     runs, users, segments = pd.DataFrame(runs), pd.concat(users), pd.concat(segments)
     burst = users[users.kind == "burst"].assign(p95_ms=lambda u: u.delay_p95_s * 1e3)
-    whole = segments[segments.sent == segments.pkts]
-    whole = whole.assign(late=(whole.rx < campaign.MIN_RX * whole.pkts)
-                         | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S))
-    return runs, burst, whole
+    return runs, burst, campaign.whole_segments(segments)
 
 
 def mean_ci(x):
