@@ -33,12 +33,20 @@ MARGINS = (0, 0.25, 0.5, 1.0)  # safety margin on the measured load
 LOADS = [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
 CHAINS = (64, 48, 32, 24, 16)
 PEAK = "--peak" in sys.argv    # 100 Mbit/s from the peak profile (with video) instead of day100
-SFX = "_peak" if PEAK else ""
+# --final: the final campaign (bs-results-indep/x1): every neighbour picks its chains for its own load, same load as
+# cell 0, loads up to 150 Mbit/s; QoS from studies.final (paired with 64 chains seed by seed, 20 seeds at 80-150)
+FINAL = "--final" in sys.argv
+SFX = "_final" if FINAL else "_peak" if PEAK else ""
+if FINAL:
+    LOADS, MAX_MBPS = [1, 5] + list(range(10, 151, 10)), 150
+IND = paths.RAW / "bs-results-indep" / "x1"
 STEPS = 24 * 60 // STEP_MIN
 
 
 def run_name(load, a, r):
     """The grid run if it exists (48 and 24 chains, other loads), else the main campaign (64/32/16 at 1, 40 and peak)."""
+    if FINAL:
+        return IND / (f"night_a{a}_r{r}" if load == 1 else f"day{load}_a{a}_r{r}")
     if load == 100 and PEAK:
         grid, main = GRID / f"peak100_a{a}_r{r}", c.RAW / f"peak100_a{a}_r{r}"
     else:
@@ -53,7 +61,7 @@ def curves():
     rows, users = [], []
     for load in LOADS:
         for a in CHAINS:
-            for r in range(1, c.SEEDS + 1):
+            for r in range(1, (20 if FINAL else c.SEEDS) + 1):
                 o = run_name(load, a, r)
                 if not o.with_name(o.name + "_flows.csv").exists():
                     continue
@@ -79,6 +87,9 @@ def curves():
     q["extra_pct"] = q.over_pct - ref.over_pct.reindex(q.index, level="load").to_numpy()
     q["extra_late"] = q.late - ref.late.reindex(q.index, level="load").to_numpy()
     q["ok"] = (q.extra_pct <= 100 * c.MAX_EXTRA_USERS) & (q.extra_late <= 0) & (q.loss < 100 * c.MAX_LOSS)
+    if FINAL:   # paired criterion of studies.final (24 and 16 chains have 10 seeds, 64 has 20 at 80-150)
+        f = pd.read_csv(paths.RESULTS / "final.csv").query("factor == 'x1'").set_index(["load", "chains"])
+        q["ok"], q["extra_pct"] = f.ok.reindex(q.index), f.extra_pct.reindex(q.index)
     return q
 
 
@@ -136,8 +147,9 @@ def evaluate(load, chains, q, cap, symbol=True):
     bad = np.zeros(load.shape, bool)
     for a in CHAINS:
         bad |= (chains == a) & (load > cap[a])
-    return dict(kwh=(piov * h).sum(1) / 1e3, tgpp=(tg * h).sum(1), viol=100 * bad.mean(1),
-                switches=(np.diff(chains, axis=1) != 0).sum(1))
+    full = load > cap[64]          # not even 64 chains give acceptable QoS: the cell is saturated, not the policy's fault
+    return dict(kwh=(piov * h).sum(1) / 1e3, tgpp=(tg * h).sum(1), viol=100 * (bad & ~full).mean(1),
+                saturated=100 * full.mean(1), switches=(np.diff(chains, axis=1) != 0).sum(1))
 
 
 def policies(load, cap):
@@ -172,7 +184,8 @@ if __name__ == "__main__":
         s, s3 = 100 * (1 - e["kwh"] / ref), 100 * (1 - e["tgpp"] / ref3)
         rows.append(dict(policy=n, interval_min=iv, margin=m, kwh=e["kwh"].mean(), saving=s.mean(), saving_ci=half_ci(s),
                          saving_3gpp=s3.mean(), violation_pct=e["viol"].mean(), violation_ci=half_ci(e["viol"]),
-                         days_with_violation=100 * (e["viol"] > 0).mean(), switches=e["switches"].mean()))
+                         days_with_violation=100 * (e["viol"] > 0).mean(), saturated_pct=e["saturated"].mean(),
+                         switches=e["switches"].mean()))
     r = pd.DataFrame(rows)
     r.to_csv(paths.RESULTS / f"policy{SFX}.csv", index=False)
     print(r.round(2).to_string(index=False))
@@ -183,11 +196,11 @@ if __name__ == "__main__":
     t = np.arange(STEPS) * STEP_MIN / 60
     a1.plot(t, base_profile(), color=MUTED, lw=1.5, ls="--", label="mean profile (8/12/4 h)")
     a1.plot(t, load[0], color=BLUE, lw=1.5, label="one simulated day")
-    for v in sorted({cap[a] for a in CHAINS if a != 64}):
-        names = ", ".join(str(a) for a in CHAINS[::-1] if a != 64 and cap[a] == v)
+    for v in sorted({cap[a] for a in CHAINS if a != 64 or FINAL}):   # final: 64 chains saturate above their limit
+        names = ", ".join(str(a) for a in CHAINS[::-1] if (a != 64 or FINAL) and cap[a] == v)
         a1.axhline(v, color=ORANGE, lw=1, ls=":")
         a1.text(0.2, v + 1.5, f"{names} chains: QoS acceptable up to {v} Mbit/s", fontsize=8, color=INK)
-    a1.set(ylabel="offered load [Mbit/s]", ylim=(0, 105), title="A day and the chains a reactive policy picks")
+    a1.set(ylabel="offered load [Mbit/s]", ylim=(0, MAX_MBPS + 5), title="A day and the chains a reactive policy picks")
     a1.legend(frameon=False, loc="lower left", bbox_to_anchor=(0, 0.05), fontsize=8)
     name = "reactive 15 min, margin 25%"
     a2.step(t, pol[name][2][0], where="post", color=ORANGE, lw=1.5, label=name)
@@ -213,5 +226,7 @@ if __name__ == "__main__":
     ax.set(xlabel="time with QoS not acceptable [%]", ylabel="saving against always on [%] (Piovesan)",
            title="What a policy that decides by itself keeps")
     ax.legend(frameon=False, loc="center right", fontsize=8)
+    sat = f"\nNot counted: {r.saturated_pct.iloc[0]:.1f}% of the time the load is above what even 64 chains carry " \
+          f"({cap[64]} Mbit/s)" if FINAL else ""
     save(fig, f"policy_tradeoff{SFX}.png", f"{DAYS} simulated days. Margin on the measured load: 0, 25, 50, 100% from right to "
-                                     "left on every line (labelled on the 15 min one)")
+                                     "left on every line (labelled on the 15 min one)" + sat)

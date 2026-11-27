@@ -4,6 +4,10 @@ The full record behind the [README](../README.md), in the order the work was don
 found, and the fixes and dead ends along the way. Scenario, traffic, power model and QoS criterion are described in
 the README ([Method](../README.md#method)); the commands to rerun each campaign and study are in [RUN.md](RUN.md).
 
+Steps 1-11 keep the neighbour sites at 64 chains, step 12 gives them the chains of cell 0. Step 13 is the final
+configuration, where every site picks its own chains for its own load, and recomputes steps 2, 3, 10 and 11 on it.
+Steps 4-9 stay on the earlier configuration: at night and by day the neighbours make no difference (step 12).
+
 ## 1. Calibrating the peak
 
 At 150 Mbit/s the cell was overloaded in most seeds (losses 5-28%); the first trials had used a lucky
@@ -223,3 +227,86 @@ and 16 chains still fail the QoS criterion (+5.7 and +7.1 points of users over 2
 So the best setting per level does not change, and the results of the earlier steps, with neighbours at 64,
 are slightly pessimistic for the QoS at peak. The SINR and errors with neighbours at 64 come from the mix
 campaign of step 9, whose OFDMA runs are identical to the main ones.
+
+## 13. Final study: every cell picks its own chains
+
+In a real network each cell would choose its chains from its own traffic. The scenario got one more option,
+`--neighborLoadMbps` (burst load of the other sites, separate from cell 0), and `run_campaign.sh` can give each
+neighbour the chains that a rule picks for the neighbour's own load (`NEIGHBOR_CHAINS=rule`; the rule is the one of
+step 11: 16 chains up to 40 Mbit/s, 24 up to 50, 48 up to 100, 64 above). Cell 0 ran every chain count at every
+load, with 1890 runs in `bs-results-indep` (`studies.final`):
+
+- neighbours at the same load as cell 0: night and 5-150 Mbit/s every 10, 64/48/32/24/16 chains, 10 seeds,
+  20 seeds for 64/48/32 chains at 80-150 Mbit/s, where the QoS decision was closest;
+- neighbours at half and at twice the load of cell 0 (at most 150 Mbit/s): 10, 20, 40, 60, 80, 100, 120 and
+  150 Mbit/s, 10 seeds.
+
+The day profile is used throughout (10 burst users per site, no video).
+
+![Highest load each number of chains carries with acceptable QoS](../analysis/figures/final_capacity.png)
+
+| Chains of cell 0 | Neighbours at 64 (step 11) | Neighbours at 0.5x | **Same load (1x)** | 2x |
+|---|---|---|---|---|
+| 16 | 40 | 60 | **50** | 20 |
+| 24 | 50 | 80 | **60** | 20 |
+| 32 | 50 | 80 | **60** | 40 |
+| 48 | 100 | 150+ | **100** | 80 |
+| 64 + symbol (losses under 1%) | 100+ | 150+ | **120** | 100 |
+
+Highest load with acceptable QoS, Mbit/s; "+": no failure up to the highest load simulated. At 0.5x and 2x only
+eight loads were simulated, so those limits are lower bounds.
+
+![Saving and QoS cost against load, neighbours at the same load](../analysis/figures/final_curves.png)
+
+- **Neighbours that save too let cell 0 save more.** At the same load, 16 chains are acceptable up to 50 Mbit/s
+  instead of 40, and 24 or 32 up to 60 instead of 50: lightly loaded neighbours use fewer chains and interfere less.
+- **The neighbours' load matters as much as one's own.** With neighbours twice as loaded, 16 chains carry only
+  20 Mbit/s; with neighbours half as loaded, 48 chains carry 150.
+- **32 chains are never worth it**: they carry the same load as 24 for 2-3 points less saving.
+- **Above 120 Mbit/s the cell is saturated**: even 64 chains lose over 1% of the packets.
+- **More seeds settle the 48-chain limit.** With 20 seeds the 95% CI of the extra users over 20 ms at 48 chains,
+  80-110 Mbit/s, is 3-5 points: +3.0 ± 3.7 at 100 Mbit/s (acceptable), +8.5 at 110 (not). The 16-chain limit at
+  50 Mbit/s is exactly on the criterion (+5.0 ± 7.7 points, 10 seeds) and could be 40 with other seeds.
+- **The rule is consistent with what it produces.** The neighbours used the step 11 rule, which is more cautious
+  than the limits measured here, so between 40 and 60 Mbit/s they kept more chains than needed. Fewer chains in the
+  neighbours mean less interference in cell 0 (step 12), so the limits above are lower bounds and no rerun is needed.
+- **The criterion is relative.** From about 90 Mbit/s even 64 chains degrade: 11% of the burst users over 20 ms at
+  90 Mbit/s, 22% at 120, 51% at 150. "Acceptable" means "not much worse than 64 chains".
+
+**One day (step 3 again).** Night and day come from this campaign (neighbours at the same load). The peak keeps the
+profile with video of the main campaign, with neighbours at 64: this campaign has no video, and neighbours that also
+save would only lower the interference. At peak 48 chains are acceptable (+4.3 points of users over 20 ms, no extra
+late segment; step 11), so the best settings become 16 chains at night and by day, 48 at peak.
+
+| Policy (hours 8/12/4) | Energy per day | Saving, Piovesan | Saving, 3GPP Cat. 1 |
+|---|---|---|---|
+| Always on | 16.81 kWh | - | - |
+| Symbol shutdown | 13.64 kWh | 18.9% | 38.8% |
+| Symbol + channel, 64 at peak (steps 2-3) | 12.23 kWh | 27.3% | 48.0% |
+| **Symbol + channel, 48 at peak** | **12.00 kWh** | **28.6 ± 0.4%** | **49.1%** |
+| ... + 3GPP light sleep at night (SSB every 160 ms) | | | **56.6%** |
+
+The night and day powers are within 0.5 W of the main campaign (453.9 and 479.1 W with 16 chains): the gain comes
+from the peak. The light-sleep night is the NS-3 simulation of step 10, whose neighbours are at 64; at 1 Mbit/s the
+neighbours make no difference.
+
+**The policy (step 11 again)** on the same 300 days, with the limits measured here and loads up to 150 Mbit/s
+instead of 100 (`studies.policy --final`).
+
+![One simulated day and the chains the rule picks, final configuration](../analysis/figures/policy_day_final.png)
+
+![Saving against time with QoS not acceptable, final configuration](../analysis/figures/policy_tradeoff_final.png)
+
+| Policy | Saving, Piovesan | Saving, 3GPP Cat. 1 | Time with QoS not acceptable | Step 11 |
+|---|---|---|---|---|
+| 64 chains + symbol, no decision | 18.8% | 38.8% | 0 | 18.9% |
+| Oracle | 27.6% | 48.4% | 0 | 27.6% |
+| Every 5 min, margin 50% | **24.8%** | 45.9% | 0.05% | 24.0%, 0.04% |
+| Every 5 min, margin 100% | 22.9% | 44.1% | 0 | 22.8% |
+| Every 15 min, margin 100% | 22.9% | 44.0% | 0.04% | 22.8%, 0.05% |
+| Every 60 min, margin 100% | 23.1% | 44.0% | 1.0% | 23.1%, 1.2% |
+
+The rule gains almost a point at the same QoS. The oracle does not move: it uses 16 chains for longer, but the
+loads above 100 Mbit/s, clipped before, now count. 2.8% of the time (about 40 minutes a day, at peak) the load is
+above 120 Mbit/s and not even 64 chains give acceptable QoS; that time is not counted as a fault of the policy.
+

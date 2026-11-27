@@ -42,6 +42,20 @@ OUT=bs-results-grid PROFILES="night day5 day10 day20 day30 day40 day50 day60 day
 OUT=bs-results-allsites NEIGHBOR_CHAINS=same CHAINS="32 16" ./run_campaign.sh  # all sites with fewer chains (~45 min)
 ```
 
+Final study (step 13): every neighbour picks its chains for its own load (`NEIGHBOR_CHAINS=rule`, rule in `RULE`),
+neighbour load as a multiple of the load of cell 0 (`NEIGHBOR_LOAD`, at most 150 Mbit/s). 1890 runs, about 21 h:
+
+```bash
+ALL="night day5 day10 day20 day30 day40 day50 day60 day70 day80 day90 day100 day110 day120 day130 day140 day150"
+SOME="day10 day20 day40 day60 day80 day100 day120 day150"
+HIGH="day80 day90 day100 day110 day120 day130 day140 day150"
+export NEIGHBOR_CHAINS=rule CHAINS="64 48 32 24 16"
+OUT=bs-results-indep/x1 NEIGHBOR_LOAD=1 PROFILES="$ALL" ./run_campaign.sh
+OUT=bs-results-indep/x0.5 NEIGHBOR_LOAD=0.5 PROFILES="$SOME" ./run_campaign.sh
+OUT=bs-results-indep/x2 NEIGHBOR_LOAD=2 PROFILES="$SOME" ./run_campaign.sh
+OUT=bs-results-indep/x1 NEIGHBOR_LOAD=1 SEEDS=20 PROFILES="$HIGH" CHAINS="64 48 32" ./run_campaign.sh  # seeds 11-20
+```
+
 The two grid campaigns are 560 runs, about 4 h 30.
 
 ## Analysis
@@ -72,3 +86,5 @@ cd analysis
 | `studies.threegpp` | 3GPP TR 38.864 power model, with its light and deep sleep | main and 3GPP sleep campaigns |
 | `studies.policy` | A rule that picks the chains from the measured load (`--peak`: 100 Mbit/s with video) | main and grid campaigns |
 | `studies.allsites` | All sites with the same chains as cell 0 | main, mix and all-sites campaigns |
+| `studies.final` | Final study: limits per chains and neighbour load, one day (Piovesan and 3GPP) | final, main, grid and 3GPP sleep campaigns |
+| `studies.policy --final` | The rule of step 11 on the final configuration (run `studies.final` first) | final campaign |

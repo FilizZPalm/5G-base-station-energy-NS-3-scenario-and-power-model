@@ -11,14 +11,21 @@ step, is in [docs/STEPS.md](docs/STEPS.md); every command to rerun it is in [doc
 
 ## Results at a glance
 
-| Question | Answer (10 seeds, 95% CI where shown) |
+Final configuration: every site picks its own chains for its own load.
+
+| Question | Answer (10 seeds, 20 at high load; 95% CI where shown) |
 |---|---|
-| Saving over a day, symbol + channel shutdown | **-27.3 ± 0.4%** (16.83 -> 12.24 kWh) |
-| ... adding a 0.5 ms sleep mode, simulated in NS-3 | **-32.9 ± 0.6%** (11.30 kWh) |
-| Best setting per traffic level | night and day: 16 of 64 chains + symbol shutdown; peak: 64 chains + symbol |
-| QoS cost | none at night and by day; at peak, fewer chains fail the QoS criterion |
-| A rule that picks the chains from the load measured every 5 min | **-24.0%** with QoS unacceptable 0.04% of the time (oracle -27.6%) |
-| Same traffic, 3GPP power model (TR 38.864) | symbol + channel **-48%**; with light sleep at night (SSB every 160 ms) **-55.5%** |
+| Saving over a day, symbol + channel shutdown | **-28.6 ± 0.4%** (16.81 -> 12.00 kWh) |
+| Best setting per traffic level | night and day: 16 of 64 chains + symbol shutdown; peak: 48 chains + symbol |
+| Load that fewer chains carry with acceptable QoS | 16 chains up to 50 Mbit/s, 24 up to 60, 48 up to 100; above 120 even 64 saturate |
+| A rule that picks the chains from the load measured every 5 min | **-24.8%** with QoS unacceptable 0.05% of the time (oracle -27.6%) |
+| Same traffic, 3GPP power model (TR 38.864) | symbol + channel **-49%**; with light sleep at night (SSB every 160 ms) **-56.6%** |
+
+Earlier configuration (neighbour sites always at 64 chains, 64 at peak):
+
+| Question | Answer |
+|---|---|
+| ... adding a 0.5 ms sleep mode, simulated in NS-3 | **-32.9 ± 0.6%** over a day (against -27.3% without it) |
 | Energy efficiency over a day | 53.3 -> 73.3 kbit/J (+37%) |
 | TDMA instead of OFDMA scheduling | about 1% less energy over a day, and fewer users over 20 ms at peak (8 -> 4 of 70) |
 
@@ -31,12 +38,13 @@ levels, the hours per level, the 20 ms delay limit and the pairing of sleep time
 
 **Scenario** (`ns-3.46.1/scratch/bs-energy.cc`). Three sites 500 m apart (cell radius 250 m), 10 users per site, urban
 macro channel (3GPP UMa) with shadowing. Each site is one active antenna unit (AAU) with two contiguous
-30 MHz carriers at 3.5 GHz (n78), TDD pattern DDDSU and a 64-element array. Only cell 0 is measured; its
-neighbours use 64 chains. Scheduling is proportional fair. SU-MIMO with two layers is on;
+30 MHz carriers at 3.5 GHz (n78), TDD pattern DDDSU and a 64-element array. Only cell 0 is measured. In the
+final study each neighbour picks its chains for its own load, which is the same as, half or twice that of cell 0;
+in the earlier steps the neighbours kept 64 chains. Scheduling is proportional fair. SU-MIMO with two layers is on;
 MU-MIMO is not available in 5G-LENA for the downlink. Each user is attached to its strongest site.
 
 **Traffic.** Three levels, each simulated for 10 s after a 0.3 s warm-up, with 10 random seeds. A day is
-8 h of night, 12 h of day and 4 h of peak.
+8 h of night, 12 h of day and 4 h of peak. The final study also runs the day profile from 5 to 150 Mbit/s.
 
 | Level | Offered traffic | Users |
 |---|---|---|
@@ -68,27 +76,31 @@ losses stay under 1%.
 
 ## Main results
 
-**Fewer chains save most when the cell is quiet** ([step 2](docs/STEPS.md#2-main-campaign-power-and-qos)).
-At night and by day 16 of 64 chains with symbol shutdown cut the power by about 32% at no QoS cost. At peak,
-32 and 16 chains leave 24 and 33 of 70 burst users over 20 ms (8 with 64), so 64 chains stay on.
+**Fewer chains save most when the cell is quiet, and how far they go depends on the neighbours**
+([steps 2](docs/STEPS.md#2-main-campaign-power-and-qos) and [13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)).
+With 16 of 64 chains and symbol shutdown the power falls by about 32% at any load, but the QoS holds only up to
+50 Mbit/s when the neighbours carry the same load (20 with neighbours twice as loaded, 60 with half). 48 chains
+carry up to 100 Mbit/s, and above 120 the cell saturates even with 64. 32 chains are never worth it: they carry
+the same load as 24.
 
-![AAU power by traffic level and number of chains](analysis/figures/power_by_profile.png)
+![Highest load each number of chains carries with acceptable QoS](analysis/figures/final_capacity.png)
 
-**Over a day: -27.3%, and -32.9% with a sleep mode** ([steps 3](docs/STEPS.md#3-one-day-and-the-deeper-sleep-modes)
-and [6](docs/STEPS.md#6-sleep-with-a-wake-up-time)). Sleeping between bursts with a 0.5 ms wake-up time adds 18% at
-night, for about 1 ms more delay. What moves the daily saving most is the number of peak hours.
+**Over a day: -28.6%** ([step 13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)), with 16 chains
+at night and by day and 48 at peak (-27.3% keeping 64 at peak). Sleeping between bursts with a 0.5 ms wake-up time
+adds about 18% at night, for about 1 ms more delay ([step 6](docs/STEPS.md#6-sleep-with-a-wake-up-time), earlier
+configuration: -32.9% over the day). What moves the daily saving most is the number of peak hours.
 
-![Energy of one day per sleep policy](analysis/figures/daily_power.png)
+![Energy of one day per sleep policy, earlier configuration](analysis/figures/daily_power.png)
 
 **A simple rule gets most of it without knowing the traffic**
-([step 11](docs/STEPS.md#11-a-policy-that-picks-the-chains-by-itself)). Every 5 minutes it measures the load,
-adds a 50% margin and keeps the fewest chains that sustain it: -24.0% against -27.6% for an oracle, with
-the QoS unacceptable 0.04% of the time. Deciding every hour is too slow. 48 chains sustain the whole peak.
+([steps 11 and 13](docs/STEPS.md#13-final-study-every-cell-picks-its-own-chains)). Every 5 minutes it measures
+the load, adds a 50% margin and keeps the fewest chains that sustain it: -24.8% against -27.6% for an oracle, with
+the QoS unacceptable 0.05% of the time. Deciding every hour is too slow.
 
-![Saving against time with QoS not acceptable](analysis/figures/policy_tradeoff.png)
+![Saving against time with QoS not acceptable](analysis/figures/policy_tradeoff_final.png)
 
 **The power model matters as much as the technique** ([step 10](docs/STEPS.md#10-the-3gpp-power-model)). With
-the 3GPP TR 38.864 model (Category 1) the same traffic saves 48%, and 55.5% with light sleep at night, because
+the 3GPP TR 38.864 model (Category 1) the same traffic saves 49%, and 56.6% with light sleep at night, because
 an empty symbol costs 20% of full load there against 47% in Piovesan. The report does not say which of its two
 categories of values applies to real equipment.
 
@@ -96,7 +108,8 @@ categories of values applies to real equipment.
 
 Also in [STEPS.md](docs/STEPS.md): calibrating the peak load (1), energy efficiency in bit/J (4), the EARTH
 and Björnson power models (5), busier nights (7), TDMA against OFDMA and why TDMA serves the peak better
-(8, 9), all sites with fewer chains (12).
+(8, 9), all sites with fewer chains (12). Steps 1-12 keep the neighbours at 64 chains (12: at the chains of
+cell 0); step 13 recomputes steps 2, 3, 10 and 11 with every site deciding for itself.
 
 ## Main assumptions and limits
 
@@ -106,14 +119,21 @@ and Björnson power models (5), busier nights (7), TDMA against OFDMA and why TD
   delay limit and the QoS criterion, and the video segments are assumptions.
 - With Piovesan, sleep times come from a survey and sleep powers from Piovesan. The 3GPP model gives both
   from one source but leaves open which of its two categories applies.
-- In the main results the neighbour sites keep 64 chains while cell 0 saves. With all sites at the same
-  chains the QoS at peak improves but the best settings do not change ([step 12](docs/STEPS.md#12-all-sites-with-fewer-chains)).
+- The QoS criterion is relative to 64 chains, and from about 90 Mbit/s 64 chains degrade too (11% of the burst
+  users over 20 ms at 90 Mbit/s, 22% at 120). "Acceptable" means "not much worse than 64 chains".
+- The final study uses burst users only. Its peak hours keep the earlier peak with video, with neighbours at 64
+  chains, which is pessimistic for the QoS. The neighbours pick their chains with a fixed rule, more cautious than
+  the limits measured, so those limits are lower bounds.
+- The 16-chain limit at 50 Mbit/s sits exactly on the criterion (+5.0 ± 7.7 points, 10 seeds).
+- The sleep-mode, energy-efficiency, power-model and scheduler studies (steps 4-9) use the earlier configuration,
+  with neighbours at 64 chains; at night and by day the neighbours make no difference ([step 12](docs/STEPS.md#12-all-sites-with-fewer-chains)).
 - Sleep with a wake-up time is implemented on the OFDMA scheduler only, so TDMA was not combined with it.
 - With OFDMA, 18-25% of the blocks at peak fail their first transmission, above the usual 10% target:
   5G-LENA has no outer loop link adaptation. A simple one is available (`--ollaStep`, off) but made delay,
   losses and power much worse in a trial; all results are without it.
 - The policy study takes a change of chains as instantaneous and free.
-- With 10 seeds the QoS differences have wide intervals.
+- With 10 seeds the QoS differences have wide intervals; the final study uses 20 at 80-150 Mbit/s for 64, 48 and
+  32 chains.
 
 ## Contents
 

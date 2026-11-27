@@ -655,6 +655,7 @@ main(int argc, char* argv[])
 {
     std::string profile = "day";
     double loadMbps = -1;    // offered DL burst load per cell, <0: profile default
+    double neighborLoadMbps = -1; // offered DL burst load of each other site, <0: as cell 0
     int activeUes = -1;      // UEs with traffic per site, <0: profile default
     uint32_t antennas = 64;  // active RF chains: 64, 32 or 16 (channel shutdown)
     uint32_t neighborAntennas = 64; // chains of the other sites
@@ -685,6 +686,7 @@ main(int argc, char* argv[])
     CommandLine cmd(__FILE__);
     cmd.AddValue("profile", "night, day or peak", profile);
     cmd.AddValue("loadMbps", "Offered DL burst load per cell [Mbit/s]", loadMbps);
+    cmd.AddValue("neighborLoadMbps", "Offered DL burst load of each other site [Mbit/s], <0: as cell 0", neighborLoadMbps);
     cmd.AddValue("activeUes", "UEs with traffic per site", activeUes);
     cmd.AddValue("antennas", "Active RF chains of cell 0 (64, 48, 32, 24, 16)", antennas);
     cmd.AddValue("neighborAntennas", "Active RF chains of the other sites", neighborAntennas);
@@ -763,6 +765,7 @@ main(int argc, char* argv[])
     {
         NS_ABORT_MSG("profile: night, day or peak");
     }
+    neighborLoadMbps = neighborLoadMbps < 0 ? loadMbps : neighborLoadMbps;
     NS_ABORT_MSG_IF(activeUes > int(uesPerGnb) || activeUes <= int(video.size()),
                     "activeUes must exceed the video UEs and not exceed uesPerGnb");
     RngSeedManager::SetRun(run);
@@ -982,7 +985,8 @@ main(int argc, char* argv[])
         auto sinkApps = sink.Install(ues.Get(i));
         sinkApps.Start(Seconds(0));
         const uint32_t k = i % uesPerGnb; // index inside the site
-        if (k >= uint32_t(activeUes) || (k >= video.size() && loadMbps <= 0))
+        const double siteLoad = i < uesPerGnb ? loadMbps : neighborLoadMbps;
+        if (k >= uint32_t(activeUes) || (k >= video.size() && siteLoad <= 0))
         {
             continue;
         }
@@ -1012,7 +1016,7 @@ main(int argc, char* argv[])
         else
         {
             auto src = Create<BurstSource>(s,
-                                           loadMbps * 1e6 / (activeUes - video.size()),
+                                           siteLoad * 1e6 / (activeUes - video.size()),
                                            burstBytes,
                                            stop,
                                            5000 + i);
