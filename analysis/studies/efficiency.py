@@ -64,8 +64,7 @@ def plot(table):
 if __name__ == "__main__":
     runs = runs_by_key()
     qos = pd.read_csv(paths.RESULTS / "campaign.csv", index_col=["profile", "chains"])
-    # relative QoS criterion of lib.campaign (users over the limit, losses)
-    qos_ok = (qos.extra_users_pct <= 100 * campaign.MAX_EXTRA_USERS) & (qos.loss_pct < 100 * campaign.MAX_LOSS)
+    qos_ok = qos.qos_ok   # relative QoS criterion of lib.campaign (users over the limit, late segments, losses)
 
     rows = []
     for profile in PROFILES:
