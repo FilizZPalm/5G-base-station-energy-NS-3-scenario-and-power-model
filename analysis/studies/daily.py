@@ -1,72 +1,86 @@
-"""Campaign results (night, day, peak levels) -> energy of one day, per sleep policy.
+"""Energy of one day, per sleep policy (step 3 of docs/STEPS.md).
 
-Each hour of the day is one of the three simulated levels; hours per level are an assumption.
-Sleep modes with a formula only (all carriers off, deep dormancy) are marked: no wake-up, no 4G QoS."""
+A day is made of the three simulated levels: every hour is night, day or peak (8/12/4 h, an assumption). The energy
+of the day is the sum of hours x power of the level, seed by seed; the saving is against 64 chains always on.
+
+Policies (chains and symbol shutdown per level):
+  always on          64 chains, no shutdown
+  symbol             64 chains, power amplifiers off in empty symbols
+  symbol + channel   16 chains at night and by day, 64 at peak, with symbol shutdown
+and two that replace the night with a state from the power formula only (no wake-up time, no 4G QoS simulated):
+  + night carriers off*   all carriers off at night, the 4G anchor carries the traffic
+  + night dormancy*       deep dormancy at night
+
+Run from analysis/:  ../.venv/bin/python -m studies.daily
+Also imported by other studies for HOURS, POLICIES, energy() and half_ci().
+"""
+from functools import cache
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from lib import campaign as c, paths, power as pw
+
+from lib import campaign, paths, power
 from lib.style import BLUE, INK, MUTED, ORANGE, OUT
 
-# ASSUMPTIONS ---------------------------------------------------------------------------
+# ASSUMPTIONS ------------------------------------------------------------------------------------------------------
 HOURS = {"night": 8, "day": 12, "peak100": 4}
+# other splits of the day, night/day/peak hours, to see how much the result depends on them
 SENSITIVITY = {"6/14/4": (6, 14, 4), "8/12/4 (base)": (8, 12, 4), "10/10/4": (10, 10, 4),
                "8/14/2": (8, 14, 2), "8/10/6": (8, 10, 6)}
-# policy -> (chains, symbol shutdown) per level; the last two replace the night with a formula-only state
+# policy -> per level: (active chains, symbol shutdown 0/1)
 POLICIES = {
     "always on": {"night": (64, 0), "day": (64, 0), "peak100": (64, 0)},
     "symbol": {"night": (64, 1), "day": (64, 1), "peak100": (64, 1)},
     "symbol + channel": {"night": (16, 1), "day": (16, 1), "peak100": (64, 1)},
 }
-NIGHT_STATES = {"+ night carriers off*": pw.CARRIER_OFF, "+ night dormancy*": pw.DORMANT}
-# ---------------------------------------------------------------------------------------
+# night states from the power formula only, in units of the peak power (the rest of the day as symbol + channel)
+NIGHT_STATES = {"+ night carriers off*": power.CARRIER_OFF, "+ night dormancy*": power.DORMANT}
+# ------------------------------------------------------------------------------------------------------------------
 
-w = c.runs.set_index(["profile", "chains", "seed"])
-seeds = range(1, c.SEEDS + 1)
+SEEDS = range(1, campaign.SEEDS + 1)
+
+
+def half_ci(values):
+    """Half width of the 95% confidence interval of the mean (Student t for 10 seeds)."""
+    return np.std(values, ddof=1) * campaign.T975 / np.sqrt(len(values))
+
+
+@cache
+def runs_by_key():
+    """The main campaign runs, looked up by (level, chains, seed)."""
+    return campaign.runs.set_index(["profile", "chains", "seed"])
 
 
 def level_power(policy, level):
-    """AAU power of a level, one value per seed [W]."""
+    """AAU power of one level under one policy, one value per seed [W]."""
+    runs = runs_by_key()
     if level == "night" and policy in NIGHT_STATES:
-        sent = np.array([w.loc[("night", 64, s), "sent"] for s in seeds])
-        return NIGHT_STATES[policy] * c.W + pw.ANCHOR_W_PER_MBPS * sent
-    a, sym = POLICIES.get(policy, POLICIES["symbol + channel"])[level]
-    return np.array([w.loc[(level, a, s), "watt_sym" if sym else "watt"] for s in seeds])
+        # the AAU is in the formula-only state; the 4G anchor carries the night traffic at ANCHOR_W_PER_MBPS
+        sent = np.array([runs.loc[("night", 64, s), "sent"] for s in SEEDS])
+        return NIGHT_STATES[policy] * campaign.W + power.ANCHOR_W_PER_MBPS * sent
+    chains, symbol = POLICIES.get(policy, POLICIES["symbol + channel"])[level]
+    column = "watt_sym" if symbol else "watt"
+    return np.array([runs.loc[(level, chains, s), column] for s in SEEDS])
 
 
 def energy(policy, hours):
-    """Energy of the day, one value per seed [kWh]."""
-    return sum(h * level_power(policy, l) for l, h in hours.items()) / 1000
+    """Energy of one day, one value per seed [kWh]. hours: level -> hours per day."""
+    return sum(h * level_power(policy, level) for level, h in hours.items()) / 1000
 
 
-def half_ci(v):
-    return np.std(v, ddof=1) * c.T975 / np.sqrt(len(v))
+NAMES = list(POLICIES) + list(NIGHT_STATES)
 
 
-names = list(POLICIES) + list(NIGHT_STATES)
-if __name__ == "__main__":
-    ref = energy("always on", HOURS)
-    rows = []
-    for n in names:
-        e = energy(n, HOURS)
-        s = 100 * (1 - e / ref)  # paired by seed
-        rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=s.mean(), saving_ci=half_ci(s),
-                         **{f"W_{l}": level_power(n, l).mean() for l in HOURS}))
-    r = pd.DataFrame(rows).set_index("policy")
-    r.to_csv(paths.RESULTS / "daily.csv")
-    pd.set_option("display.width", 200, "display.max_columns", 20)
-    print(r.round(2).to_string())
-    t = {k: {n: 100 * (1 - energy(n, dict(zip(HOURS, v))).mean() / energy("always on", dict(zip(HOURS, v))).mean())
-             for n in names[1:]} for k, v in SENSITIVITY.items()}
-    print("\nsaving % by hours night/day/peak\n", pd.DataFrame(t).T.round(1).to_string(), sep="")
-
+def plot(table):
+    """Horizontal bars: energy of the day per policy, with the saving."""
     fig, ax = plt.subplots(figsize=(8, 4))
-    cols = [ORANGE if n in NIGHT_STATES else BLUE for n in names]
-    ax.barh(names[::-1], r.kWh_day[::-1], .6, color=cols[::-1], xerr=r.kWh_ci[::-1],
+    colors = [ORANGE if n in NIGHT_STATES else BLUE for n in NAMES]
+    ax.barh(NAMES[::-1], table.kWh_day[::-1], .6, color=colors[::-1], xerr=table.kWh_ci[::-1],
             error_kw=dict(ecolor=INK, lw=1, capsize=2))
-    for n in names:
-        ax.text(r.kWh_day[n] + r.kWh_ci[n] + .2, n, f"{r.kWh_day[n]:.1f} kWh"
-                + (f"  (−{r.saving_pct[n]:.0f}%)" if n != "always on" else ""), va="center", fontsize=9, color=INK)
+    for n in NAMES:
+        label = f"{table.kWh_day[n]:.1f} kWh" + (f"  (−{table.saving_pct[n]:.0f}%)" if n != "always on" else "")
+        ax.text(table.kWh_day[n] + table.kWh_ci[n] + .2, n, label, va="center", fontsize=9, color=INK)
     ax.set(xlabel="AAU energy per day [kWh]", xlim=(0, 22),
            title=f"Energy of one day ({'/'.join(map(str, HOURS.values()))} h night/day/peak, assumed)")
     ax.grid(axis="y", visible=False)
@@ -74,3 +88,26 @@ if __name__ == "__main__":
     fig.text(.01, .01, "* night from the power formula only (no wake-up, no 4G QoS). 10 seeds; bars: 95% CI",
              fontsize=8, color=MUTED)
     fig.savefig(OUT / "daily_power.png", dpi=200, facecolor="white")
+
+
+if __name__ == "__main__":
+    reference = energy("always on", HOURS)
+    rows = []
+    for n in NAMES:
+        e = energy(n, HOURS)
+        saving = 100 * (1 - e / reference)   # paired by seed
+        rows.append(dict(policy=n, kWh_day=e.mean(), kWh_ci=half_ci(e), saving_pct=saving.mean(), saving_ci=half_ci(saving),
+                         **{f"W_{level}": level_power(n, level).mean() for level in HOURS}))
+    table = pd.DataFrame(rows).set_index("policy")
+    table.to_csv(paths.RESULTS / "daily.csv")
+    pd.set_option("display.width", 200, "display.max_columns", 20)
+    print(table.round(2).to_string())
+
+    # saving with other splits of the day
+    sensitivity = {}
+    for split, hours in SENSITIVITY.items():
+        h = dict(zip(HOURS, hours))
+        sensitivity[split] = {n: 100 * (1 - energy(n, h).mean() / energy("always on", h).mean()) for n in NAMES[1:]}
+    print("\nsaving % by hours night/day/peak\n", pd.DataFrame(sensitivity).T.round(1).to_string(), sep="")
+
+    plot(table)
