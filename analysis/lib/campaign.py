@@ -129,7 +129,7 @@ def table(runs, burst, whole):
     out["extra_users_pct"] = 100 * (share_over - share_over.xs(64, level="chains").reindex(share_over.index, level="profile"))
     late = out.segments_late.fillna(0)
     out["extra_late"] = late - late.xs(64, level="chains").reindex(late.index, level="profile")
-    out["qos_ok"] = ((out.extra_users_pct <= 100 * MAX_EXTRA_USERS) & (late == 0)
+    out["qos_ok"] = ((out.extra_users_pct <= 100 * MAX_EXTRA_USERS) & (out.extra_late <= 0)
                      & (out.loss_pct < 100 * MAX_LOSS))
     return out
 
