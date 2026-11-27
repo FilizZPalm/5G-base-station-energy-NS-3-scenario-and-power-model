@@ -1,13 +1,18 @@
 """A map of the simulated scenario (geometry and radio settings of ns-3.46.1/scratch/bs-energy.cc), for the README.
 The sites, distances and radio settings are those of the program. The user positions are only an example: NS-3 draws
-them per seed and keeps a user only if its own site is the strongest, shadowing included, which is not reproduced here."""
+them per seed and keeps a user only if its own site is the strongest, shadowing included, which is not reproduced here.
+
+Panels: the map of the three sites (left), the active chains of the array, the two carriers and the TDD frame (right).
+Run from analysis/:  ../.venv/bin/python -m studies.scenario
+"""
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Arc, Circle, FancyBboxPatch, Polygon, Rectangle
+
 from lib.style import BLUE, GRID, INK, MUTED, ORANGE, save
 
-RADIUS, MIN_R, UES = 250, 35, 10                      # m, m, users per site (bs-energy.cc)
-ISD = 2 * RADIUS
+RADIUS, MIN_R, UES = 250, 35, 10                      # cell radius [m], minimum user distance [m], users per site
+ISD = 2 * RADIUS                                      # inter-site distance [m]
 SITES = np.array([[0, 0]] + [[ISD * np.cos(2 * np.pi * g / 6), ISD * np.sin(2 * np.pi * g / 6)] for g in (1, 2)])
 SHAPES = {64: (8, 8), 48: (6, 8), 32: (4, 8), 24: (4, 6), 16: (4, 4)}   # rows x columns of elements
 
@@ -27,9 +32,10 @@ def example_users(rng):
 
 
 def clean(ax):
+    """No grid and no frame."""
     ax.grid(False)
-    for s in ax.spines.values():
-        s.set_visible(False)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
 
 
 def antenna(ax, x, y, color, k=1.0):

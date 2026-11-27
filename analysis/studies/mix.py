@@ -1,79 +1,111 @@
-"""Why TDMA serves the peak better: cell 0 and neighbour sites with OFDMA or TDMA, independently (2 x 2, paired by seed).
+"""Why TDMA serves the peak better (step 9 of docs/STEPS.md; campaign bs-results-mix).
 
-Every transport block received in cell 0 is traced (_tb.csv). Effects are averaged over the other factor:
-cell-0 effect = mean over neighbour schedulers of (TDMA - OFDMA in cell 0), and the same for the neighbours."""
-import numpy as np
+At peak, cell 0 and the neighbour sites each use OFDMA or TDMA, independently: four combinations, same seeds, so
+every difference is paired. Every transport block (TB) received in cell 0 is traced (<prefix>_tb.csv), which gives
+the errors at first transmission and how uneven the interference is across the resource blocks of a block.
+
+Effects are averaged over the other factor (a 2 x 2 design):
+  cell 0 effect      mean over the neighbours' scheduler of (cell 0 TDMA - cell 0 OFDMA)
+  neighbours effect  mean over cell 0's scheduler of (neighbours TDMA - neighbours OFDMA)
+  interaction        how much one effect depends on the other
+
+Run from analysis/:  ../.venv/bin/python -m studies.mix
+"""
+import matplotlib.pyplot as plt
 import pandas as pd
-from lib import campaign as c, ns3data, paths, power as pw
+
+from lib import campaign, ns3data, paths, power
 from lib.style import BLUE, CHAINS, INK, ORANGE, save
 from studies.daily import half_ci
-import matplotlib.pyplot as plt
 
 RAW = paths.RAW / "bs-results-mix"
-SCH = ("ofdma", "tdma")
-rows = []
-for c0 in SCH:
-    for nb in SCH:
-        for a in (64, 32, 16):
-            for r in range(1, c.SEEDS + 1):
-                o = RAW / f"{c0}-{nb}" / f"peak100_a{a}_r{r}"
-                m = ns3data.summary(f"{o}_slots.csv", f"{o}_flows.csv", c.DURATION)
-                f = pd.read_csv(f"{o}_flows.csv")
-                b = 1e3 * f[f.kind == "burst"].delay_p95_s
-                s = pd.read_csv(f"{o}_segments.csv")
-                s = s[s.sent == s.pkts]
-                late = ((s.rx < c.MIN_RX * s.pkts) | (s.last_rx_s - s.start_s > c.SEGMENT_S)).sum()
-                t = pd.read_csv(f"{o}_tb.csv")
-                first = t[t.rv == 0]
-                rows.append(dict(cell0=c0, neigh=nb, chains=a, seed=r,
-                                 watt_sym=float(pw.piovesan(m["prb_load"], a, m["pa_off"])) * c.W, pa_off=m["pa_off"],
-                                 prb=m["prb_load"], delay_ms=1e3 * m["delay"], over=int((b > c.LIMIT_MS).sum()),
-                                 late=int(late), loss=100 * m["loss"],
-                                 retx=100 * (t.rv > 0).mean(),                   # blocks that are retransmissions
-                                 bler=100 * first.corrupt.mean(),                # errors on first transmissions
-                                 spread=(first.sinr_db - first.sinr_min_db).mean(),  # SINR in-block: mean - worst RB
-                                 rbs=first.rbs.mean(), syms=first.syms.mean()))
-d = pd.DataFrame(rows)
+SCHEDULERS = ("ofdma", "tdma")
 COLS = ["watt_sym", "pa_off", "prb", "delay_ms", "over", "late", "loss", "retx", "bler", "spread", "rbs", "syms"]
 
-if __name__ == "__main__":
-    pd.set_option("display.width", 250, "display.max_columns", 30)
-    g = d.groupby(["chains", "cell0", "neigh"], sort=False)
-    out = g[COLS].mean()
-    for k in ("over", "late"):
-        out[k] = g[k].sum()  # users of 70, segments of 147
-    out.to_csv(paths.RESULTS / "mix.csv")
-    print(out.round(3).to_string())
 
-    print("\nEffects, paired by seed (mean +- 95 % CI):")
-    w = d.set_index(["chains", "seed", "cell0", "neigh"]).sort_index()
-    eff = []
-    for a in (64, 32, 16):
-        x = w.loc[a]
-        v = lambda c0, nb, k: x.xs((c0, nb), level=("cell0", "neigh"))[k].to_numpy()
-        for k in ("watt_sym", "bler", "spread", "delay_ms", "loss", "over"):
-            e = {"cell 0": (v("tdma", "ofdma", k) - v("ofdma", "ofdma", k) + v("tdma", "tdma", k) - v("ofdma", "tdma", k)) / 2,
-                 "neighbours": (v("ofdma", "tdma", k) - v("ofdma", "ofdma", k) + v("tdma", "tdma", k) - v("tdma", "ofdma", k)) / 2,
-                 "interaction": v("tdma", "tdma", k) - v("tdma", "ofdma", k) - v("ofdma", "tdma", k) + v("ofdma", "ofdma", k)}
-            eff.append(dict(chains=a, metric=k, **{n: f"{e[n].mean():+.2f} +- {half_ci(e[n]):.2f}" for n in e}))
-    print(pd.DataFrame(eff).to_string(index=False))
+def late_segments(prefix):
+    segments = pd.read_csv(f"{prefix}_segments.csv")
+    whole = segments[segments.sent == segments.pkts]
+    return ((whole.rx < campaign.MIN_RX * whole.pkts) | (whole.last_rx_s - whole.start_s > campaign.SEGMENT_S)).sum()
 
-    # Figure: first-transmission errors and in-block SINR spread; colour = cell 0, hatching = neighbours with TDMA
+
+def load():
+    rows = []
+    for cell0 in SCHEDULERS:
+        for neighbours in SCHEDULERS:
+            for chains in (64, 32, 16):
+                for seed in range(1, campaign.SEEDS + 1):
+                    prefix = RAW / f"{cell0}-{neighbours}" / f"peak100_a{chains}_r{seed}"
+                    metrics = ns3data.summary(f"{prefix}_slots.csv", f"{prefix}_flows.csv", campaign.DURATION)
+                    flows = pd.read_csv(f"{prefix}_flows.csv")
+                    p95_ms = 1e3 * flows[flows.kind == "burst"].delay_p95_s
+                    blocks = pd.read_csv(f"{prefix}_tb.csv")
+                    first = blocks[blocks.rv == 0]              # first transmissions (redundancy version 0)
+                    rows.append(dict(cell0=cell0, neigh=neighbours, chains=chains, seed=seed,
+                                     watt_sym=float(power.piovesan(metrics["prb_load"], chains, metrics["pa_off"])) * campaign.W,
+                                     pa_off=metrics["pa_off"], prb=metrics["prb_load"], delay_ms=1e3 * metrics["delay"],
+                                     over=int((p95_ms > campaign.LIMIT_MS).sum()), late=int(late_segments(prefix)),
+                                     loss=100 * metrics["loss"],
+                                     retx=100 * (blocks.rv > 0).mean(),                     # blocks that are retransmissions
+                                     bler=100 * first.corrupt.mean(),                       # errors at first transmission
+                                     spread=(first.sinr_db - first.sinr_min_db).mean(),     # SINR in a block: mean - worst RB
+                                     rbs=first.rbs.mean(), syms=first.syms.mean()))
+    return pd.DataFrame(rows)
+
+
+def effects(runs):
+    """Cell 0, neighbours and interaction effects per chains and metric, paired by seed (mean +- 95% CI)."""
+    by_key = runs.set_index(["chains", "seed", "cell0", "neigh"]).sort_index()
+    out = []
+    for chains in (64, 32, 16):
+        these = by_key.loc[chains]
+
+        def value(cell0, neighbours, metric):
+            return these.xs((cell0, neighbours), level=("cell0", "neigh"))[metric].to_numpy()
+
+        for metric in ("watt_sym", "bler", "spread", "delay_ms", "loss", "over"):
+            oo, ot = value("ofdma", "ofdma", metric), value("ofdma", "tdma", metric)   # cell 0 first, neighbours second
+            to, tt = value("tdma", "ofdma", metric), value("tdma", "tdma", metric)
+            effect = {"cell 0": (to - oo + tt - ot) / 2,
+                      "neighbours": (ot - oo + tt - to) / 2,
+                      "interaction": tt - to - ot + oo}
+            out.append(dict(chains=chains, metric=metric,
+                            **{name: f"{e.mean():+.2f} +- {half_ci(e):.2f}" for name, e in effect.items()}))
+    return pd.DataFrame(out)
+
+
+def plot(means):
+    """Errors at first transmission and SINR spread in a block; colour = cell 0, hatching = neighbours with TDMA."""
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.4))
-    combos = [(c0, nb) for c0 in SCH for nb in SCH]
-    for ax, (k, lab, top) in zip(axes, (("bler", "blocks in error at first transmission [%]", 30),
-                                        ("spread", "SINR in the block: mean - worst RB [dB]", 13))):
-        for j, (c0, nb) in enumerate(combos):
+    combinations = [(cell0, neighbours) for cell0 in SCHEDULERS for neighbours in SCHEDULERS]
+    for ax, (metric, label, top) in zip(axes, (("bler", "blocks in error at first transmission [%]", 30),
+                                               ("spread", "SINR in the block: mean - worst RB [dB]", 13))):
+        for j, (cell0, neighbours) in enumerate(combinations):
             x = [i + (j - 1.5) * .2 for i in range(3)]
-            y = [out.loc[(a, c0, nb), k] for a in CHAINS]
-            ax.bar(x, y, .18, color=BLUE if c0 == "ofdma" else ORANGE, hatch="///" if nb == "tdma" else None,
-                   edgecolor="white", lw=0, label=f"cell 0 {c0.upper()}, neighbours {nb.upper()}")
+            y = [means.loc[(a, cell0, neighbours), metric] for a in CHAINS]
+            ax.bar(x, y, .18, color=BLUE if cell0 == "ofdma" else ORANGE, hatch="///" if neighbours == "tdma" else None,
+                   edgecolor="white", lw=0, label=f"cell 0 {cell0.upper()}, neighbours {neighbours.upper()}")
             for xi, yi in zip(x, y):
-                ax.text(xi, yi + top / 80, f"{yi:.0f}" if k == "bler" else f"{yi:.1f}", ha="center", fontsize=7,
+                ax.text(xi, yi + top / 80, f"{yi:.0f}" if metric == "bler" else f"{yi:.1f}", ha="center", fontsize=7,
                         color=INK)
-        ax.set(xticks=range(3), xticklabels=CHAINS, xlabel="active chains in cell 0", ylabel=lab, ylim=(0, top))
+        ax.set(xticks=range(3), xticklabels=CHAINS, xlabel="active chains in cell 0", ylabel=label, ylim=(0, top))
         ax.grid(axis="x", visible=False)
     axes[0].set_title("Peak: errors")
     axes[1].set_title("Peak: interference uneven in frequency")
     fig.legend(*axes[0].get_legend_handles_labels(), loc="lower right", ncol=2, frameon=False, fontsize=8)
     save(fig, "mix.png", "10 seeds, paired. Hatched: neighbour sites with TDMA")
+
+
+if __name__ == "__main__":
+    pd.set_option("display.width", 250, "display.max_columns", 30)
+    runs = load()
+    grouped = runs.groupby(["chains", "cell0", "neigh"], sort=False)
+    means = grouped[COLS].mean()
+    for metric in ("over", "late"):
+        means[metric] = grouped[metric].sum()     # totals: users of 70, segments of 147
+    means.to_csv(paths.RESULTS / "mix.csv")
+    print(means.round(3).to_string())
+
+    print("\nEffects, paired by seed (mean +- 95 % CI):")
+    print(effects(runs).to_string(index=False))
+    plot(means)
